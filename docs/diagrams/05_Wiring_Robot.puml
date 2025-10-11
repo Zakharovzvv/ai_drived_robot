@@ -1,0 +1,42 @@
+@startuml Wiring_Robot
+title Wiring and physical interfaces — Robot
+skinparam componentStyle rectangle
+
+component "ESP32-S3-CAM\n(3.3V)" as ESP32
+component "Arduino UNO\n(5V)" as UNO
+component "MC29 / MC29x4\n(Motor controllers)" as MC29
+component "Power: LiPo 2S\nMPS / DC-DC 5V -> LDO 3.3V" as POWER
+component "Line Trackers\n(VEX 276-12154)" as LT
+component "Wheel Encoders\n(VEX 276-12156)" as ODO
+component "Grip Potentiometer" as POT
+component "Dev PC / USB\n(Serial, flashing)" as DEV
+component "MPS / E-STOP" as MPS
+
+ESP32 -down-> UNO : I2C 400kHz (master → slave)\nSDA/SCL @3.3V, pull-ups 4.7-10k
+ESP32 -right-> DEV : UART / USB 115200 (CLI, logs, flashing)
+
+UNO -down-> MC29 : PWM / Motor commands\nServo PWM 1000..2000 μs for MC29
+MC29 -left-> POWER : Motor supply (battery)\nHigh-current path (bypass logic)
+POWER -right-> ESP32 : 5V -> LDO -> 3.3V
+POWER -down-> UNO : 5V supply
+
+LT --> UNO : analog / digital inputs (A0/A1)
+ODO --> UNO : encoder A/B inputs (timers/counts)
+POT --> UNO : analog grip pot (A2)
+
+MPS --> MC29 : E-STOP hard line (cuts motor power)
+MPS --> UNO : E-STOP input (brake command)
+ESP32 --> MPS : monitor (digital input)\nreport status to operator
+
+note right of ESP32
+I2C protocol: ICD v0.2
+Messages: cmd, telemetry, heartbeat
+Timeout -> BRAKE
+end note
+
+note left of UNO
+UNO acts as low-level controller:\ndrive_meca, lift_ctrl, grip_ctrl, odo_read
+Responds to I2C commands from ESP32
+end note
+
+@enduml

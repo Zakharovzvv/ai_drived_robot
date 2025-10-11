@@ -1,0 +1,38 @@
+@startuml C4_Sequence_PickPlace
+title Регистрация задания Pick→Place и исполнение
+
+actor "Оператор" as Operator
+participant "Web UI / CLI" as UI #lightblue
+participant "ESP32-S3-CAM" as ESP #lightgreen
+participant "Arduino UNO" as UNO #wheat
+participant "Motor Controllers\n(MC29)" as MC #palegoldenrod
+
+Operator -> UI: Выбрать задание Pick\n(цвет целевого слота)
+UI -> ESP: start_task(PickPlace, color)
+ESP -> ESP: planner.plan(target)
+ESP -> ESP: vision.detect(color) -> targetPose
+ESP -> ESP: planner.navigate(targetPose)
+ESP -> UNO: I2C cmd: MOVE_TO(x,y,ω)
+UNO -> MC: servo PWM / motor commands
+MC --> UNO: ack
+UNO -> UNO: odo_encoders update
+UNO -> ESP: I2C telemetry: encoders, line, pot
+ESP -> ESP: approach docking (vision_dock)
+ESP -> UNO: I2C cmd: ELEV(h)
+UNO -> MC: lift motor control
+ESP -> UNO: I2C cmd: GRIP(CLOSE)
+UNO -> UNO: grip position reached
+UNO -> ESP: I2C telemetry: grip pot
+ESP -> UNO: I2C cmd: MOVE_TO(place_x,place_y,ω)
+UNO -> MC: drive
+ESP -> UNO: I2C cmd: GRIP(OPEN)
+UNO -> UNO: grip opens
+ESP -> UI: task_result(success, details)
+UI -> Operator: Отчёт и карта мест
+
+alt Ошибка/таймаут
+  UNO -> ESP: telemetry error / timeout
+  ESP -> UI: publish error
+  ESP -> UNO: I2C cmd: BRAKE
+end
+@enduml

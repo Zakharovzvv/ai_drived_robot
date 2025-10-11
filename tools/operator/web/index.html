@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RBM Operator Console</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>RBM Operator Console</h1>
+      <p>Monitor robot state and dispatch safe commands.</p>
+    </header>
+
+    <main>
+      <section id="status-panel">
+        <h2>Status</h2>
+        <div class="status-grid" id="status-grid"></div>
+        <button id="refresh-status" type="button">Refresh</button>
+      </section>
+
+      <section id="telemetry-panel">
+        <h2>Telemetry</h2>
+        <canvas id="telemetry-chart" width="640" height="320"></canvas>
+        <div class="legend" id="telemetry-legend"></div>
+      </section>
+
+      <section id="controls-panel">
+        <h2>Controls</h2>
+        <form id="start-form">
+          <label>
+            Task ID
+            <input id="start-task" name="task" type="text" value="default" />
+          </label>
+          <button type="submit">Start Task</button>
+        </form>
+
+        <form id="command-form">
+          <label>
+            Command
+            <input id="raw-command" name="command" type="text" placeholder="STATUS" />
+          </label>
+          <label>
+            <input id="raise-on-error" name="raiseOnError" type="checkbox" />
+            Raise on error
+          </label>
+          <button type="submit">Send Command</button>
+        </form>
+
+        <button id="brake-button" type="button" class="danger">BRAKE</button>
+        <pre id="command-output" class="output"></pre>
+      </section>
+    </main>
+
+    <footer>
+      <small>ESP32 link via local FastAPI gateway. Ensure the server is running on port 8000.</small>
+    </footer>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
