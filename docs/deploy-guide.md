@@ -27,35 +27,41 @@
 
 ## 2) PlatformIO: структура проекта и конфиг
 
-### 2.1 Структура
+### 2.1 Актуальная структура репозитория
 
+```text
+ai_drived_robot/
+├── docs/
+│   ├── deploy-guide.md
+│   ├── operator.md
+│   ├── implementation-plan.md
+│   └── ... (ICD, схемы, архитектурные заметки)
+├── firmware/
+│   ├── platformio.ini
+│   └── src/
+│       ├── esp32/
+│       │   ├── config.hpp
+│       │   ├── i2c_link.cpp / i2c_link.hpp
+│       │   ├── shelf_map.cpp / shelf_map.hpp
+│       │   ├── vision_color.cpp / vision_color.hpp
+│       │   ├── main.cpp (верхнеуровневое поведение)
+│       │   ├── include/   (хедеры для PlatformIO)
+│       │   └── src/       (дубли для layout PIO)
+│       └── uno/
+│           └── main.cpp   (прошивка исполнительного контроллера)
+└── tools/
+    └── operator/
+        ├── cli.py, esp32_link.py, server.py
+        ├── start_operator_stack.sh / stop_operator_stack.sh
+        ├── pyproject.toml, tests/
+        └── web/ (Vite + Chart.js фронтенд)
 ```
-rbm_pio/
-  platformio.ini
-  src/
-    uno/
-      rbm_uno.ino
-      icd.h
-      config.h
-      mecanum.h
-    esp32/
-      main.cpp
-      i2c_link.h
-      i2c_link.cpp
-      vision_color.h
-      vision_color.cpp
-      planner.h
-      planner.cpp
-      bt.h
-      bt.cpp
-  tools/
-    plot_telemetry.py
-  logs/
-```
+
+> Директория `.venv` для Python и папка `node_modules/` создаются по месту (внутри `tools/operator/`) и не входят в репозиторий.
 
 ### 2.2 platformio.ini (готовый шаблон)
 
-```
+```ini
 [platformio]
 default_envs = esp32s3, uno
 
@@ -166,7 +172,7 @@ if(link.readBlock(0x44, s1, sizeof(s1)) && link.readBlock(0x48, ln, sizeof(ln)))
 
 ### 8.2 Скрипт `tools/plot_telemetry.py`
 
-```
+```bash
 python tools/plot_telemetry.py <PORT_ESP32>
 ```
 
@@ -215,7 +221,7 @@ python tools/plot_telemetry.py <PORT_ESP32>
 
 ## 12) Приложение A — Быстрые команды PIO
 
-```
+```bash
 # Сборка/прошивка
 pio run -e uno -t upload
 pio run -e esp32s3 -t upload
@@ -232,3 +238,25 @@ pio device list
 ---
 
 Готово. Следующий шаг — (1) пройти весь раздел 1–7 один‑в‑один, (2) включить визуализацию по §8, (3) подогнать калибровки по §9 и только потом ехать на поле. Если нужно — добавлю отдельный раздел с веб‑дашбордом (ESP32‑CAM MJPEG + статус‑оверлей).
+
+---
+
+## 13) Операторский интерфейс (CLI + Web UI)
+
+Каталог `tools/operator/` содержит полностью автономный стек для взаимодействия с ESP32:
+
+* **CLI (`rbm-operator`)** — позволяет опрашивать статус, подписываться на телеметрию, выполнять команду BRAKE и управлять картой склада.
+* **FastAPI-шлюз (`rbm-operator-server`)** — обеспечивает REST/WebSocket доступ к UART.
+* **Web UI (`tools/operator/web`)** — дашборд на Vite + Chart.js с графиками и управляющими кнопками.
+
+Рекомендуемый порядок запуска:
+
+```bash
+cd tools/operator
+./start_operator_stack.sh        # поднимает backend и фронтенд
+
+# После работы
+./stop_operator_stack.sh
+```
+
+Скрипты автоматически используют виртуальное окружение (`.venv`) и проверяют наличие `node_modules`. Если нужно запустить вручную — следуйте новому руководству `docs/operator.md` (разделы 2–7).

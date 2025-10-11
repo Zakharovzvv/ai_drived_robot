@@ -1,0 +1,25 @@
+# macOS artifacts
+.DS_Store
+
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+tools/operator/.venv/
+
+# Node.js dependencies
+node_modules/
+tools/operator/web/node_modules/
+
+# Operator runtime outputs
+.operator_runtime/
+tools/operator/.operator_runtime/
+
+# Logs and misc
+*.log

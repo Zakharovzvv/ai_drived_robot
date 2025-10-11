@@ -1,0 +1,32 @@
+@startuml C4_Component_ESP32_UNO
+!includeurl https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_LEFT_RIGHT()
+
+Container_Boundary(esp32B, "ESP32-S3-CAM") {
+  Component(vision, "vision_color / vision_dock", "CV Module", "Color detection, docking detection, ROI/HSV processing")
+  Component(planner, "planner", "A* planner", "Path planning and navigation state machine")
+  Component(bt, "bt", "Bluetooth / Command FSM", "Init → Pick → GoPlace(color) → Place → loop")
+  Component(shelf, "shelf_map", "Storage", "3x3 shelf map stored in NVS, CLI SMAP get/set/save/clear")
+  Component(i2c, "i2c_link (master)", "I2C Master", "ICD protocol for motor commands, telemetry, heartbeat")
+  Component(cli, "UART CLI", "Console", "Status, CFG_*, SMAP, i2c scan, dock dbg")
+}
+
+Container_Boundary(unoB, "Arduino UNO") {
+  Component(drive, "drive_meca", "Mecanum drive", "Compute servo PWM for 4 motors from Vx,Vy,ω")
+  Component(lift, "lift_ctrl", "PID", "Lift encoder control, homing")
+  Component(grip, "grip_ctrl", "Position control", "Grip open/close/pose by pot")
+  Component(line, "line_follow", "Controller", "Line-follow PID using L-R sensors")
+  Component(odo, "odo_read", "Odometry", "Encoder counts publishing to ESP32 via I2C/ODOM")
+  Component(safety, "safety", "E-STOP/MPS", "Brake on timeout / emergency stop")
+}
+
+Rel(vision, planner, "Target/pose -> planner")
+Rel(planner, bt, "State cmds -> bt")
+Rel(bt, i2c, "Commands -> UNO (pick/place, move, elev, grip)")
+Rel(i2c, unoB, "I2C messages", "ICD payloads: cmd/telemetry")
+Rel(unoB, i2c, "Telemetry -> ESP32", "encoders, pots, line status")
+Rel(cli, devPC, "Serial logs / CLI", "UART/USB")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,28 @@
+@startuml C4_Container_Robot
+!includeurl https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_LEFT_RIGHT()
+
+System_Boundary(robot, "Robot System") {
+  Container(esp32, "ESP32-S3-CAM", "MCU (Vision, Planner, BT, I2C master)", "Vision CV, planner A*, SHELF_MAP, I2C master, UART CLI")
+  Container(uno, "Arduino UNO", "MCU (Low-level control)", "Drive, lift, grip, odometry, line follow; I2C slave")
+  Container(motorCtrl, "Motor Controllers", "MC29 / MC29x4", "Drives VEX 393 motors")
+  Container(sensors, "Sensors", "Line trackers / Encoders / Pots", "Line L/R, ODO L/R, lift enc A/B, grip pot")
+  Container(ui, "Web UI / CLI", "Operator interface", "Status, start task, logs")
+  ContainerDb(cfg, "NVS / Config", "Persistent storage", "SHELF_MAP, CFG_ODO, CFG_LINE")
+}
+
+System_Ext(devPC, "Dev PC", "IDE/Serial")
+System_Ext(mps, "MPS / E-STOP", "Safety")
+
+Rel(operator, ui, "Start task / Monitor", "HTTPS / CLI")
+Rel(ui, esp32, "Commands / Telemetry", "HTTPS/WebSocket / Serial gateway (optional)")
+Rel(esp32, uno, "I2C (master→slave) / UART", "I2C 400kHz, Serial 115200")
+Rel(uno, motorCtrl, "PWM / Control", "Servo PWM 1000..2000μs / motor commands")
+Rel(sensors, uno, "Analog/Digital", "A0/A1, interrupts, ADC")
+Rel(esp32, cfg, "Read/Write", "NVS / CLI commands")
+Rel(esp32, devPC, "Serial logs / flashing", "UART/USB")
+Rel(robot, mps, "E-STOP status", "Digital signal")
+
+SHOW_LEGEND()
+@enduml
