@@ -1,26 +1,65 @@
+#include <Arduino.h>
 #include "vision_color.hpp"
 #include "config.hpp"
 #include "esp_camera.h"
+#include "esp32-hal-psram.h"
 
 ColorThresh gThresh;
 
-// NOTE: Adjust the camera pins to match your ESP32-S3-CAM module if needed.
+// Freenove ESP32-S3 WROOM routes the camera like CAMERA_MODEL_ESP32S3_EYE.
 static bool camera_setup() {
-  camera_config_t config;
-  memset(&config, 0, sizeof(config));
-  // The board framework provides default pins for CAMERA_MODEL_ESP32S3_EYE. Adjust if your board differs.
+  camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer   = LEDC_TIMER_0;
+  config.pin_d0       = 11;
+  config.pin_d1       = 9;
+  config.pin_d2       = 8;
+  config.pin_d3       = 10;
+  config.pin_d4       = 12;
+  config.pin_d5       = 18;
+  config.pin_d6       = 17;
+  config.pin_d7       = 16;
+  config.pin_xclk     = 15;
+  config.pin_pclk     = 13;
+  config.pin_vsync    = 6;
+  config.pin_href     = 7;
+  config.pin_sccb_sda = 4;
+  config.pin_sccb_scl = 5;
+  config.pin_pwdn     = -1;
+  config.pin_reset    = -1;
+  config.xclk_freq_hz = 10000000; // Stable for OV2640 on this board
   config.pixel_format = PIXFORMAT_RGB565;
-  config.frame_size   = FRAMESIZE_QQVGA; // 160x120
+  config.frame_size   = FRAMESIZE_QQVGA; // 160x120 keeps detection lightweight
   config.fb_count     = 1;
-  config.grab_mode    = CAMERA_GRAB_LATEST;
-  config.jpeg_quality = 15;
-  // Pins are set by board defaults in esp32-camera if model macro is defined.
-  return esp_camera_init(&config) == ESP_OK;
+  config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
+  config.fb_location  = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
+  config.jpeg_quality = 12;
+
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("[ESP32] Camera init failed (0x%x)\n", static_cast<uint32_t>(err));
+    return false;
+  }
+
+  sensor_t* sensor = esp_camera_sensor_get();
+  if (!sensor) {
+    Serial.println("[ESP32] Camera sensor handle missing");
+    return false;
+  }
+
+  sensor->set_framesize(sensor, FRAMESIZE_QQVGA);
+  sensor->set_pixformat(sensor, PIXFORMAT_RGB565);
+  sensor->set_vflip(sensor, 1);   // Module mounted upside-down
+  sensor->set_hmirror(sensor, 0);
+  sensor->set_brightness(sensor, 1);
+  sensor->set_saturation(sensor, 0);
+
+  return true;
 }
 
-bool cam_init(){ return camera_setup(); }
+bool cam_init(){
+  return camera_setup();
+}
 
 static void rgb2hsv(uint8_t r, uint8_t g, uint8_t b, uint8_t& h, uint8_t& s, uint8_t& v){
   uint8_t maxc = max(r, max(g,b));
@@ -42,8 +81,14 @@ static bool inRange(const HSVRange& R, uint8_t h,uint8_t s,uint8_t v){
 }
 
 ColorID detect_cylinder_color(){
+  if(esp_camera_sensor_get() == nullptr) return C_NONE;
   camera_fb_t* fb = esp_camera_fb_get();
   if(!fb) return C_NONE;
+  if(fb->format != PIXFORMAT_RGB565){
+    Serial.printf("[ESP32] Unexpected frame format %d\n", fb->format);
+    esp_camera_fb_return(fb);
+    return C_NONE;
+  }
   // Sample a central circular ROI ~40x40 px
   const int W = fb->width, H = fb->height;
   const int cx = W/2, cy = H*3/4; // lower center

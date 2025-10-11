@@ -77,16 +77,53 @@ bool ShelfMap::saveNVS() const{
   prefs.end(); return ok;
 }
 
+bool shelf_cli_handle(const String& rawCmd, Stream& io){
+  String cmd = rawCmd;
+  cmd.trim();
+  if(!cmd.length()) return false;
+
+  String upper = cmd;
+  upper.toUpperCase();
+  if(!upper.startsWith("SMAP")){
+    return false;
+  }
+
+  if(upper == "SMAP GET"){
+    io.println(gShelf.toString());
+    return true;
+  }
+
+  if(upper.startsWith("SMAP SET")){
+    int idx = cmd.indexOf(' ');
+    idx = idx < 0 ? -1 : cmd.indexOf(' ', idx + 1);
+    String payload = idx < 0 ? String() : cmd.substring(idx + 1);
+    payload.trim();
+    if(payload.length()==0){
+      io.println("SMAP=ERR");
+      return true;
+    }
+    gShelf.fromString(payload);
+    io.println("OK");
+    return true;
+  }
+
+  if(upper == "SMAP SAVE"){
+    io.println(gShelf.saveNVS() ? "SAVED" : "FAIL");
+    return true;
+  }
+
+  if(upper == "SMAP CLEAR"){
+    gShelf.setDefault();
+    io.println("RESET");
+    return true;
+  }
+
+  io.println("SMAP=ERR");
+  return true;
+}
+
 void shelf_cli_process(Stream& io){
   if(!io.available()) return;
-  String cmd = io.readStringUntil('\n'); cmd.trim();
-  if(cmd.startsWith("SMAP get")){
-    io.println(gShelf.toString()); return;
-  }
-  if(cmd.startsWith("SMAP set")){
-    String s = cmd.substring(8); s.trim();
-    gShelf.fromString(s); io.println("OK"); return;
-  }
-  if(cmd=="SMAP save"){ io.println(gShelf.saveNVS() ? "SAVED" : "FAIL"); return; }
-  if(cmd=="SMAP clear"){ gShelf.setDefault(); io.println("RESET"); return; }
+  String cmd = io.readStringUntil('\n');
+  shelf_cli_handle(cmd, io);
 }

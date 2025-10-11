@@ -25,7 +25,21 @@ rbm-operator = "tools.operator.cli:run"
 rbm-operator-server = "tools.operator.server:run"
 
 [tool.hatch.build.targets.wheel]
+sources = ["../.."]
 packages = ["tools"]
 
+[tool.hatch.build.targets.editable]
+sources = ["../.."]
+packages = ["tools"]
+
+[tool.hatch.build]
+dev-mode-dirs = ["../.."]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "../tools",
+  "pyproject.toml"
+]
+
 [tool.pytest.ini_options]
-testpaths = ["tools/operator/tests"]
+testpaths = ["tests"]

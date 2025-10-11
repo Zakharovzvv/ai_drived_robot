@@ -15,6 +15,16 @@ FRONTEND_PID_FILE="${RUNTIME_DIR}/frontend.pid"
 BACKEND_LOG="${RUNTIME_DIR}/backend.log"
 FRONTEND_LOG="${RUNTIME_DIR}/frontend.log"
 VENV_BIN="${SCRIPT_DIR}/.venv/bin"
+ENV_FILE="${REPO_ROOT}/.env"
+
+# Load environment variables from .env if present
+if [[ -f "${ENV_FILE}" ]]; then
+  echo "[operator] Loading environment from ${ENV_FILE}"
+  # shellcheck disable=SC1090
+  set -a
+  source "${ENV_FILE}"
+  set +a
+fi
 
 mkdir -p "${RUNTIME_DIR}"
 

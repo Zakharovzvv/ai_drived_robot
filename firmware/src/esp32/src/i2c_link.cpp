@@ -4,6 +4,12 @@ bool i2c_init(){
   Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
   return true;
 }
+
+bool i2c_ping_uno(){
+  Wire.beginTransmission(I2C_ADDR_UNO);
+  return Wire.endTransmission()==0;
+}
+
 static bool write_reg(uint8_t reg, const uint8_t* buf, size_t n){
   Wire.beginTransmission(I2C_ADDR_UNO);
   Wire.write(reg);

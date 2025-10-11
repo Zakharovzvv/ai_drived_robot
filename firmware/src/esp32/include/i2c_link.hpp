@@ -26,6 +26,7 @@ bool i2c_cfg_lift(uint16_t enc_per_mm,int16_t h1,int16_t h2,int16_t h3);
 bool i2c_cfg_grip(uint16_t potmin,uint16_t potmax,int16_t dmin,int16_t dmax);
 bool i2c_cfg_odo(uint16_t cpr,uint16_t gear_num,uint16_t gear_den,uint16_t wheel_mm,uint16_t track_mm);
 bool i2c_seq();
+bool i2c_ping_uno();
 
 bool read_STATUS0(Status0& o);
 bool read_STATUS1(Status1& o);
