@@ -4,9 +4,6 @@
 #include "i2c_link.hpp"
 #include "vision_color.hpp"
 
-ColorThresh gThresh;
-ShelfMap gShelf;
-
 enum BTState { ST_INIT, ST_PICK, ST_GOPLACE, ST_PLACE };
 BTState st = ST_INIT;
 ColorID current_pick = C_NONE;

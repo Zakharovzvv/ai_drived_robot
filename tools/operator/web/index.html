@@ -7,12 +7,9 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <header>
+    <header class="header-compact">
       <div class="header-content">
-        <div class="header-title">
-          <h1>RBM Operator Console</h1>
-          <p>Monitor robot state and dispatch safe commands.</p>
-        </div>
+        <h1>RBM Operator Console</h1>
         <div class="connection-status">
           <span class="status-indicator" id="ws-status" aria-live="polite">
             <span class="status-dot" role="img" aria-label="Connection status"></span>
@@ -25,32 +22,30 @@
     <!-- Command Bar (sticky) -->
     <div class="command-bar">
       <div class="command-bar-content">
-        <div class="primary-actions">
-          <form id="start-form" class="inline-form">
-            <input 
-              id="start-task" 
-              name="task" 
-              type="text" 
-              value="default" 
-              placeholder="Task ID"
-              aria-label="Task identifier"
-            />
-            <button type="submit" class="btn-primary btn-action" title="Start task">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
-              Start Task
-            </button>
-          </form>
-
-          <button id="brake-button" type="button" class="btn-danger btn-action" aria-keyshortcuts="Control+B" title="Emergency stop (Ctrl+B)">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <rect x="9" y="9" width="6" height="6"/>
+        <form id="start-form" class="inline-form">
+          <input 
+            id="start-task" 
+            name="task" 
+            type="text" 
+            value="default" 
+            placeholder="Task ID"
+            aria-label="Task identifier"
+          />
+          <button type="submit" class="btn-primary btn-action" title="Start task">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"/>
             </svg>
-            BRAKE
+            Start Task
           </button>
-        </div>
+        </form>
+
+        <button id="brake-button" type="button" class="btn-danger btn-action" aria-keyshortcuts="Control+B" title="Emergency stop (Ctrl+B)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <rect x="9" y="9" width="6" height="6"/>
+          </svg>
+          BRAKE
+        </button>
 
         <form id="command-form" class="inline-form command-input-group">
           <input 
@@ -60,7 +55,7 @@
             placeholder="Enter CLI command (e.g., STATUS)" 
             aria-label="Direct CLI command"
           />
-          <button type="submit" class="btn-secondary" title="Send command">
+          <button type="submit" class="btn-secondary btn-action" title="Send command">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
             </svg>
@@ -70,9 +65,41 @@
       </div>
     </div>
 
-    <!-- Main Layout: Telemetry (wide) + Status (sidebar) -->
-    <main class="main-layout">
-      <section class="telemetry-section">
+    <!-- Tabs Navigation -->
+    <nav class="tabs-nav">
+      <button class="tab-button active" data-tab="telemetry">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+        Telemetry
+      </button>
+      <button class="tab-button" data-tab="camera">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        Camera
+      </button>
+      <button class="tab-button" data-tab="status">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        Status
+      </button>
+      <button class="tab-button" data-tab="output">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="4 17 10 11 4 5"/>
+          <line x1="12" y1="19" x2="20" y2="19"/>
+        </svg>
+        Output
+      </button>
+    </nav>
+
+    <!-- Tab Content Container -->
+    <main class="tab-content-container">
+      <!-- Telemetry Tab -->
+      <section class="tab-content active" data-tab-content="telemetry">
         <div class="section-header">
           <h2>Live Telemetry</h2>
           <div class="legend" id="telemetry-legend" role="list"></div>
@@ -82,37 +109,59 @@
         </div>
       </section>
 
-      <aside class="status-sidebar">
+      <!-- Camera Tab -->
+      <section class="tab-content" data-tab-content="camera">
         <div class="section-header">
-          <h2>Status</h2>
+          <h2>Camera Feed</h2>
+          <button id="refresh-camera" type="button" class="btn-icon" aria-label="Refresh camera" title="Refresh feed">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+            </svg>
+          </button>
+        </div>
+        <div class="camera-container-large">
+          <img id="camera-feed" src="" alt="Robot camera feed" aria-live="polite" />
+          <div class="camera-placeholder" id="camera-placeholder">
+            <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+            <p>Camera feed unavailable</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Status Tab -->
+      <section class="tab-content" data-tab-content="status">
+        <div class="section-header">
+          <h2>Robot Status</h2>
           <button id="refresh-status" type="button" class="btn-icon" aria-label="Refresh status" title="Refresh status">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
             </svg>
           </button>
         </div>
-        <div class="status-grid" id="status-grid" role="region" aria-live="polite">
+        <div class="status-grid-large" id="status-grid" role="region" aria-live="polite">
           <div class="skeleton-loader"></div>
         </div>
-      </aside>
+      </section>
+
+      <!-- Output Tab -->
+      <section class="tab-content" data-tab-content="output">
+        <div class="section-header">
+          <h2>Command Output</h2>
+          <button id="clear-output" type="button" class="btn-icon" aria-label="Clear output" title="Clear output">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="output-container">
+          <pre id="command-output" class="output" role="log" aria-live="polite" aria-atomic="true"></pre>
+        </div>
+      </section>
     </main>
-
-    <!-- Command Output (expandable footer) -->
-    <div class="output-bar">
-      <button class="output-toggle" id="output-toggle" aria-expanded="false" aria-controls="command-output">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="18 15 12 9 6 15"/>
-        </svg>
-        <span>Command Output</span>
-      </button>
-      <div class="output-content" id="output-content" hidden>
-        <pre id="command-output" class="output" role="log" aria-live="polite" aria-atomic="true"></pre>
-      </div>
-    </div>
-
-    <footer>
-      <small>ESP32 link via local FastAPI gateway. Ensure the server is running on port 8000.</small>
-    </footer>
 
     <!-- Toast notifications -->
     <div id="toast-container" aria-live="assertive" aria-atomic="true"></div>

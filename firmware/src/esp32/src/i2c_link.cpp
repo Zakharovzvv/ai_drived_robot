@@ -14,7 +14,7 @@ static bool read_reg(uint8_t reg, uint8_t* buf, size_t n){
   Wire.beginTransmission(I2C_ADDR_UNO);
   Wire.write(reg);
   if(Wire.endTransmission(false)!=0) return false;
-  size_t r = Wire.requestFrom(I2C_ADDR_UNO, (uint8_t)n);
+  size_t r = Wire.requestFrom(static_cast<uint8_t>(I2C_ADDR_UNO), static_cast<uint8_t>(n));
   if(r!=n) return false;
   for(size_t i=0;i<n;i++) buf[i]=Wire.read();
   return true;

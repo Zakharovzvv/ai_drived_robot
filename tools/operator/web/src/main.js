@@ -18,6 +18,8 @@ const METRIC_CONFIG = [
 // ==================== DOM Elements ====================
 const statusGrid = document.getElementById("status-grid");
 const refreshButton = document.getElementById("refresh-status");
+const refreshCamera = document.getElementById("refresh-camera");
+const clearOutput = document.getElementById("clear-output");
 const telemetryLegend = document.getElementById("telemetry-legend");
 const startForm = document.getElementById("start-form");
 const commandForm = document.getElementById("command-form");
@@ -25,8 +27,6 @@ const startTaskInput = document.getElementById("start-task");
 const rawCommandInput = document.getElementById("raw-command");
 const brakeButton = document.getElementById("brake-button");
 const commandOutput = document.getElementById("command-output");
-const outputToggle = document.getElementById("output-toggle");
-const outputContent = document.getElementById("output-content");
 const wsStatusEl = document.getElementById("ws-status");
 const toastContainer = document.getElementById("toast-container");
 const modalOverlay = document.getElementById("modal-overlay");
@@ -34,6 +34,15 @@ const modalTitle = document.getElementById("modal-title");
 const modalMessage = document.getElementById("modal-message");
 const modalConfirm = document.getElementById("modal-confirm");
 const modalCancel = document.getElementById("modal-cancel");
+const cameraFeed = document.getElementById("camera-feed");
+const cameraPlaceholder = document.getElementById("camera-placeholder");
+
+// Tabs
+const tabButtons = document.querySelectorAll(".tab-button");
+const tabContents = document.querySelectorAll(".tab-content");
+
+console.log("Tab buttons found:", tabButtons.length);
+console.log("Tab contents found:", tabContents.length);
 
 // ==================== State ====================
 let wsConnection = null;
@@ -310,28 +319,14 @@ commandForm.addEventListener("submit", async (event) => {
     commandOutput.textContent = JSON.stringify(result, null, 2);
     showToast("Command executed", "success");
     
-    // Auto-expand output
-    if (outputContent.hasAttribute("hidden")) {
-      outputToggle.click();
-    }
+    // Switch to Output tab
+    switchTab("output");
   } catch (error) {
     commandOutput.textContent = `✗ ${error.message}`;
     showToast(error.message, "error");
     
-    // Auto-expand output on error
-    if (outputContent.hasAttribute("hidden")) {
-      outputToggle.click();
-    }
-  }
-});
-
-outputToggle.addEventListener("click", () => {
-  const isExpanded = outputToggle.getAttribute("aria-expanded") === "true";
-  outputToggle.setAttribute("aria-expanded", !isExpanded);
-  if (isExpanded) {
-    outputContent.setAttribute("hidden", "");
-  } else {
-    outputContent.removeAttribute("hidden");
+    // Switch to Output tab on error
+    switchTab("output");
   }
 });
 
@@ -366,9 +361,94 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+// ==================== Tabs Management ====================
+function switchTab(tabName) {
+  console.log("Switching to tab:", tabName);
+  
+  // Update buttons
+  tabButtons.forEach((btn) => {
+    if (btn.dataset.tab === tabName) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+
+  // Update content
+  tabContents.forEach((content) => {
+    if (content.dataset.tabContent === tabName) {
+      content.classList.add("active");
+      console.log("Activated content:", tabName);
+    } else {
+      content.classList.remove("active");
+    }
+  });
+
+  // Auto-start camera feed when camera tab is active
+  if (tabName === "camera") {
+    startCameraRefresh();
+  } else {
+    stopCameraRefresh();
+  }
+}
+
+tabButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    console.log("Tab button clicked:", btn.dataset.tab);
+    switchTab(btn.dataset.tab);
+  });
+});
+
+// Clear output button
+if (clearOutput) {
+  clearOutput.addEventListener("click", () => {
+    commandOutput.textContent = "";
+  });
+}
+
+// ==================== Camera Feed ====================
+async function fetchCameraFeed() {
+  try {
+    const response = await fetch(`${API_BASE}/api/camera/snapshot`);
+    if (response.ok) {
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      cameraFeed.src = url;
+      cameraPlaceholder.style.display = "none";
+    } else {
+      cameraFeed.src = "";
+      cameraPlaceholder.style.display = "flex";
+    }
+  } catch (error) {
+    console.error("Camera fetch failed:", error);
+    cameraFeed.src = "";
+    cameraPlaceholder.style.display = "flex";
+  }
+}
+
+if (refreshCamera) {
+  refreshCamera.addEventListener("click", fetchCameraFeed);
+}
+
+// Periodic camera refresh (every 500ms when visible)
+let cameraRefreshInterval = null;
+const startCameraRefresh = () => {
+  if (!cameraRefreshInterval) {
+    fetchCameraFeed(); // Initial fetch
+    cameraRefreshInterval = setInterval(fetchCameraFeed, 500);
+  }
+};
+const stopCameraRefresh = () => {
+  if (cameraRefreshInterval) {
+    clearInterval(cameraRefreshInterval);
+    cameraRefreshInterval = null;
+  }
+};
+
 // ==================== Initialization ====================
 fetchStatus();
 connectWebSocket();
+statusRefreshInterval = setInterval(fetchStatus, STATUS_REFRESH_INTERVAL_MS);
 statusRefreshInterval = setInterval(fetchStatus, STATUS_REFRESH_INTERVAL_MS);
 
 // Cleanup on unload
