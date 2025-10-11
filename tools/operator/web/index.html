@@ -8,53 +8,119 @@
   </head>
   <body>
     <header>
-      <h1>RBM Operator Console</h1>
-      <p>Monitor robot state and dispatch safe commands.</p>
+      <div class="header-content">
+        <div class="header-title">
+          <h1>RBM Operator Console</h1>
+          <p>Monitor robot state and dispatch safe commands.</p>
+        </div>
+        <div class="connection-status">
+          <span class="status-indicator" id="ws-status" aria-live="polite">
+            <span class="status-dot" role="img" aria-label="Connection status"></span>
+            <span class="status-text">Connecting...</span>
+          </span>
+        </div>
+      </div>
     </header>
 
     <main>
-      <section id="status-panel">
-        <h2>Status</h2>
-        <div class="status-grid" id="status-grid"></div>
-        <button id="refresh-status" type="button">Refresh</button>
+      <section id="status-panel" class="panel">
+        <div class="panel-header">
+          <h2>Status</h2>
+          <button id="refresh-status" type="button" class="btn-secondary btn-sm" aria-label="Refresh status">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+            </svg>
+            Refresh
+          </button>
+        </div>
+        <div class="status-grid" id="status-grid" role="region" aria-live="polite">
+          <div class="skeleton-loader"></div>
+        </div>
       </section>
 
-      <section id="telemetry-panel">
-        <h2>Telemetry</h2>
-        <canvas id="telemetry-chart" width="640" height="320"></canvas>
-        <div class="legend" id="telemetry-legend"></div>
+      <section id="telemetry-panel" class="panel">
+        <div class="panel-header">
+          <h2>Live Telemetry</h2>
+          <div class="legend" id="telemetry-legend" role="list"></div>
+        </div>
+        <div class="chart-container">
+          <canvas id="telemetry-chart" role="img" aria-label="Real-time telemetry chart"></canvas>
+        </div>
       </section>
 
-      <section id="controls-panel">
+      <section id="controls-panel" class="panel">
         <h2>Controls</h2>
-        <form id="start-form">
-          <label>
-            Task ID
-            <input id="start-task" name="task" type="text" value="default" />
-          </label>
-          <button type="submit">Start Task</button>
-        </form>
+        
+        <div class="control-group">
+          <h3>Task Control</h3>
+          <form id="start-form">
+            <label for="start-task">
+              Task ID
+              <input id="start-task" name="task" type="text" value="default" aria-describedby="task-help" />
+              <small id="task-help">Enter task identifier or leave default</small>
+            </label>
+            <button type="submit" class="btn-primary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              Start Task
+            </button>
+          </form>
+        </div>
 
-        <form id="command-form">
-          <label>
-            Command
-            <input id="raw-command" name="command" type="text" placeholder="STATUS" />
-          </label>
-          <label>
-            <input id="raise-on-error" name="raiseOnError" type="checkbox" />
-            Raise on error
-          </label>
-          <button type="submit">Send Command</button>
-        </form>
+        <div class="control-group">
+          <h3>Direct Command</h3>
+          <form id="command-form">
+            <label for="raw-command">
+              Command
+              <input id="raw-command" name="command" type="text" placeholder="STATUS" aria-describedby="cmd-help" />
+              <small id="cmd-help">Enter raw ESP32 CLI command</small>
+            </label>
+            <label class="checkbox-label">
+              <input id="raise-on-error" name="raiseOnError" type="checkbox" />
+              <span>Raise on error</span>
+            </label>
+            <button type="submit" class="btn-secondary">Send Command</button>
+          </form>
+        </div>
 
-        <button id="brake-button" type="button" class="danger">BRAKE</button>
-        <pre id="command-output" class="output"></pre>
+        <div class="control-group danger-zone">
+          <h3>Emergency Stop</h3>
+          <button id="brake-button" type="button" class="btn-danger" aria-keyshortcuts="Control+B">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <rect x="9" y="9" width="6" height="6"/>
+            </svg>
+            BRAKE
+          </button>
+          <small>Stops all actuators immediately (Ctrl+B)</small>
+        </div>
+
+        <div class="output-section">
+          <h3>Command Output</h3>
+          <pre id="command-output" class="output" role="log" aria-live="polite" aria-atomic="true"></pre>
+        </div>
       </section>
     </main>
 
     <footer>
       <small>ESP32 link via local FastAPI gateway. Ensure the server is running on port 8000.</small>
     </footer>
+
+    <!-- Toast notifications -->
+    <div id="toast-container" aria-live="assertive" aria-atomic="true"></div>
+
+    <!-- Confirmation modal -->
+    <div id="modal-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+      <div class="modal-content">
+        <h2 id="modal-title"></h2>
+        <p id="modal-message"></p>
+        <div class="modal-actions">
+          <button id="modal-cancel" class="btn-secondary">Cancel</button>
+          <button id="modal-confirm" class="btn-danger">Confirm</button>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.js"></script>
   </body>
