@@ -1,6 +1,16 @@
 #pragma once
 // ====== ESP32-S3 Master Config (pins, ICD addresses, thresholds) ======
 
+#include <cstdint>
+
+// WiFi credentials (override via build flags: -DWIFI_SSID="myssid" -DWIFI_PASSWORD="pass")
+#ifndef WIFI_SSID
+#define WIFI_SSID "fsd-robot"
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD "248016"
+#endif
+
 // I2C to UNO
 #define I2C_SDA  8   // adjust to your wiring if needed
 #define I2C_SCL  9

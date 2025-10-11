@@ -11,8 +11,13 @@ from __future__ import annotations
 import re
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     import serial  # type: ignore
@@ -35,8 +40,10 @@ else:  # pragma: no cover - used to silence type-checkers when pyserial missing
 
 
 DEFAULT_BAUDRATE = 115200
-DEFAULT_TIMEOUT = 1.0  # seconds
-DEFAULT_SILENCE_GAP = 0.15  # seconds without data before we consider reply finished
+# Status polls can block on repeated I2C retries; allow ample margin.
+DEFAULT_TIMEOUT = 20.0  # seconds
+# Allow long gaps between chunks (I2C retries delay status output by several seconds).
+DEFAULT_SILENCE_GAP = 10.0  # seconds without data before we consider reply finished
 
 
 class SerialNotFoundError(RuntimeError):
@@ -111,6 +118,10 @@ class ESP32Link:
         self._prompt_regex = re.compile(prompt_pattern)
         self._serial: Optional[Any] = None
         self._lock = threading.RLock()
+        self._active_port: Optional[str] = None
+        self._log_fragment: bytes = b""
+        self._log_buffer: "deque[tuple[float, str]]" = deque(maxlen=1000)
+        self._pending_logs: list[tuple[float, str]] = []
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -136,6 +147,7 @@ class ESP32Link:
             )
             self._serial.reset_input_buffer()
             self._serial.reset_output_buffer()
+            self._active_port = port_path
 
     def close(self) -> None:
         """Close the underlying serial connection."""
@@ -144,6 +156,7 @@ class ESP32Link:
             if self._serial and self._serial.is_open:
                 self._serial.close()
             self._serial = None
+            self._active_port = None
 
     def __enter__(self) -> "ESP32Link":
         """Context manager entry."""
@@ -153,6 +166,18 @@ class ESP32Link:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
+
+    @property
+    def active_port(self) -> Optional[str]:
+        """Return the currently open serial port, if any."""
+
+        return self._active_port
+
+    @property
+    def requested_port(self) -> Optional[str]:
+        """Return the user-requested serial port, if any."""
+
+        return self._requested_port
 
     # ------------------------------------------------------------------
     # Command execution
@@ -173,17 +198,53 @@ class ESP32Link:
                 raise SerialNotFoundError("Serial device unavailable")
 
             ser = self._serial
-            ser.reset_input_buffer()
-            ser.write((command.strip() + "\n").encode("utf-8"))
-            ser.flush()
+            try:
+                self._record_new_logs(self._drain_logs_locked())
+                ser.write((command.strip() + "\n").encode("utf-8"))
+                ser.flush()
 
-            lines = self._read_reply_lines(ser, timeout=timeout)
+                lines = self._read_reply_lines(ser, timeout=timeout)
+
+                self._record_new_logs(self._drain_logs_locked())
+            except SerialNotFoundError:
+                raise
+            except (SerialException, OSError) as exc:
+                self._handle_serial_disconnect(exc)
+                raise SerialNotFoundError(str(exc)) from exc
 
         if raise_on_error:
             self._detect_cli_error(lines)
 
         parsed = parse_key_value_lines(lines) if parser is None else parser(lines)
         return CommandResult(raw=lines, data=parsed)
+
+    def _handle_serial_disconnect(self, exc: BaseException) -> None:
+        """Close the current serial handle after an unexpected disconnect."""
+
+        logger.warning("Serial link lost: %s", exc)
+        if self._serial:
+            try:
+                self._serial.close()
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
+        self._serial = None
+        self._active_port = None
+        self._log_fragment = b""
+
+    def collect_pending_logs(self) -> list[tuple[float, str]]:
+        """Return log lines captured since the last call."""
+
+        with self._lock:
+            self._record_new_logs(self._drain_logs_locked())
+            pending = list(self._pending_logs)
+            self._pending_logs.clear()
+        return pending
+
+    def recent_logs(self, limit: int = 200) -> list[tuple[float, str]]:
+        """Return the most recent log entries."""
+
+        with self._lock:
+            return list(self._log_buffer)[-limit:]
 
     # ------------------------------------------------------------------
     def subscribe(
@@ -221,12 +282,13 @@ class ESP32Link:
     ) -> List[str]:
         deadline = time.monotonic() + (timeout or self._timeout)
         lines: List[str] = []
-        last_data_ts = time.monotonic()
+        last_data_ts: Optional[float] = None
 
         while time.monotonic() < deadline:
             try:
                 raw = ser.readline()
-            except SerialException as exc:
+            except (SerialException, OSError) as exc:
+                self._handle_serial_disconnect(exc)
                 raise SerialNotFoundError(str(exc)) from exc
 
             if raw:
@@ -237,8 +299,9 @@ class ESP32Link:
                     lines.append(decoded)
                     last_data_ts = time.monotonic()
             else:
-                if time.monotonic() - last_data_ts >= self._silence_gap:
-                    break
+                if lines and last_data_ts is not None:
+                    if time.monotonic() - last_data_ts >= self._silence_gap:
+                        break
 
         return lines
 
@@ -247,6 +310,60 @@ class ESP32Link:
         for line in lines:
             if line.lower().startswith("error"):
                 raise CommandError(line)
+
+    def _drain_logs_locked(self) -> List[str]:
+        if not self._serial or not self._serial.is_open:
+            return []
+
+        ser = self._serial
+        collected: List[str] = []
+
+        while True:
+            try:
+                waiting = getattr(ser, "in_waiting", 0)
+            except (AttributeError, SerialException):
+                waiting = 0
+            except OSError as exc:
+                self._handle_serial_disconnect(exc)
+                raise SerialNotFoundError(str(exc)) from exc
+
+            if not waiting:
+                break
+
+            try:
+                chunk = ser.read(waiting)
+            except (SerialException, OSError) as exc:
+                self._handle_serial_disconnect(exc)
+                raise SerialNotFoundError(str(exc)) from exc
+            if not chunk:
+                break
+
+            data = self._log_fragment + chunk
+            lines = data.split(b"\n")
+            if data.endswith(b"\n"):
+                self._log_fragment = b""
+            else:
+                self._log_fragment = lines.pop() if lines else data
+
+            if lines and lines[-1] == b"":
+                lines = lines[:-1]
+
+            for raw in lines:
+                line = raw.decode("utf-8", errors="ignore").rstrip("\r")
+                if line:
+                    collected.append(line)
+
+        return collected
+
+    def _record_new_logs(self, lines: Iterable[str]) -> None:
+        if not lines:
+            return
+
+        now = time.time()
+        for line in lines:
+            entry = (now, line)
+            self._log_buffer.append(entry)
+            self._pending_logs.append(entry)
 
 
 # ----------------------------------------------------------------------

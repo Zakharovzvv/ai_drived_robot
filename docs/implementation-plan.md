@@ -1,54 +1,63 @@
-# Implementation Plan — Operator Web UI & CLI
+# Implementation Plan — Operator Camera & Diagnostics Stack
 
 ## Objectives
 
-- Provide an operator-facing interface (terminal & browser) to interact with the ESP32 master controller using the existing UART CLI.
-- Surface core telemetry (status, line sensors, odometry) and allow triggering safe control commands (`start`, `brake`, `smap`, configuration sync).
-- Keep the solution host-side (Dev PC) without modifying firmware; ensure serial communication is abstracted for reuse.
+- Расширить стек оператора (CLI, FastAPI, Web UI), чтобы управлять Wi‑Fi/камерой ESP32 и отображать расширенную диагностику в реальном времени.
+- Реализовать на прошивке ESP32 HTTP‑сервер камеры, управление Wi‑Fi и унифицированные статусные кадры для UNO/I2C, камеры и питания.
+- Обеспечить поток логов и контроль включения/выключения стрима камеры через общую инфраструктуру команд.
+- Синхронизировать документацию и инструменты запуска, чтобы оператор мог быстро поднять полный стек и прошить контроллер.
 
 ## Work Breakdown & Status
 
-### 1. Protocol Recon & Abstractions
+### 1. Firmware Networking Foundations
 
-- [x] Инвентаризировать доступные UART-команды (`status`, `SMAP`, `START`, `BRAKE`) и сформировать минимальный набор для операторов.
-- [x] Спроектировать Python-обёртку для последовательного обмена: автопоиск порта, обработка таймаутов, парсинг ответов.
+- [x] Добавить модуль `wifi_link` с управлением подключением, публикацией IP и повторными попытками (`firmware/src/esp32/include/wifi_link.hpp`, `.../wifi_link.cpp`).
+- [x] Расширить `config.hpp` дефолтами Wi‑Fi/камеры и поддержкой переопределения через NVS/команды.
+- [x] Обновить `platformio.ini` (раздел `esp32`) для поддержки Wi‑Fi задач и настроек камеры.
 
-### 2. Shared Serial Service Layer
+### 2. Firmware Camera HTTP Service
 
-- [x] Реализовать `tools/operator/esp32_link.py` с управлением сессией, повторными попытками и переиспользуемыми помощниками.
-- [x] Возвращать структурированные словари для статусных/телеметрических команд и операций с картой склада.
-- [x] Покрыть парсинг примерами в `tests/test_parsing.py`.
+- [x] Реализовать `camera_http` с MJPEG/снимками и маршрутом `/stream` (`firmware/src/esp32/include/camera_http.hpp`, `.../camera_http.cpp`).
+- [x] Интегрировать сервер в `main.cpp`: инициализация камеры, обработка REST команд (`CAMSTREAM`, `CAMCFG`).
+- [x] Добавить синхронизацию настроек камеры в `vision_color.cpp` и `shelf_map.cpp` (транзиентные данные в диагностике).
 
-### 3. CLI Application
+### 3. Firmware Diagnostics & UNO Link
 
-- [x] Собрать `tools/operator/cli.py` на Typer с командами `status`, `telemetry --stream`, `start-task`, `brake`, `smap`-операциями.
-- [ ] Добавить команду `cfg sync` и расширенное покрытие аргументов (запланировано после согласования с командой прошивки).
-- [x] Настроить базовые тесты для проверки парсинга и интеграции со ссылкой.
+- [x] Расширить `i2c_link` обработкой ping/seq и упаковкой ошибок UNO (`firmware/src/esp32/include/i2c_link.hpp`, `.../i2c_link.cpp`).
+- [x] Обновить `main.cpp` для публикации сводной структуры `Diagnostics` (serial, UNO, Wi‑Fi, камера, статус питания).
+- [x] Гарантировать периодическую отправку данных оператору через UART CLI (`STATUS`, `DIAG`).
 
-### 4. Web API Backend
+### 4. Operator Backend (FastAPI)
 
-- [x] Создать `tools/operator/server.py` (FastAPI) с эндпоинтами `GET /api/status`, `POST /api/command`, `WS /ws/telemetry`.
-- [x] Организовать фоновые опросы телеметрии и рассылку по подписчикам, обрабатывать разрывы соединения.
+- [x] Добавить эндпоинты `GET /api/diagnostics`, `GET /api/logs`, `POST /api/camera/config`, `POST /api/camera/toggle` в `server.py`.
+- [x] Реализовать WebSocket `ws/logs` с ретрансляцией журнала прошивки и снапшотом.
+- [x] Перенастроить `ESP32Service` на новую структуру диагностических данных и поддержку команды `CAMSTREAM`.
+- [x] Обновить загрузку окружения из `.env`, интегрировать новые параметры камеры.
 
-### 5. Web Frontend
+### 5. Operator Frontend (Vite)
 
-- [x] Реализовать дашборд (Vite + Chart.js) с живыми графиками и кнопками Start/BRAKE.
-- [x] Настроить `pnpm`-зависимости и dev-server с прокси на backend.
+- [x] Переработать `index.html` и `src/main.js` добавив вкладки Diagnostics / Camera / Logs / Settings.
+- [x] Реализовать компонент статусов с цветовой индикацией (UNO, Wi‑Fi, камера, питание) и управление камерой (toggle, refresh, quality sliders).
+- [x] Подключить WebSocket поток логов и MJPEG кадры камеры, обработать авто‑переподключение.
+- [x] Обновить стили (`src/style.css`) под новый UI и бейджи транспорта камеры.
 
-### 6. Tooling & Packaging
+### 6. Tooling, Tests & Runtime
 
-- [x] Подготовить `pyproject.toml` для установки пакета `rbm-operator-tools` во venv.
-- [x] Добавить скрипты `start_operator_stack.sh` и `stop_operator_stack.sh` для запуска стека.
+- [x] Добавить `.env` шаблон для camera snapshot override и параметров Wi‑Fi.
+- [x] Обновить `start_operator_stack.sh` для чтения `.env` и проверки зависимостей.
+- [x] Расширить `pyproject.toml` зависимостями (`python-dotenv`, `watchfiles`, streaming utils).
+- [x] Написать `tests/test_camera_config.py` на покрытие парсинга и команд `CAMCFG`.
 
-### 7. Documentation & Validation
+### 7. Documentation & Release Prep
 
-- [x] Обновить `docs/deploy-guide.md` и `docs/operator.md` с пошаговыми инструкциями.
-- [ ] Зафиксировать результаты тестов/ограничения без железа и настроить моковые сценарии (ожидает доступа к аппаратуре).
+- [x] Обновить `CHANGELOG.md` разделом про камеру/диагностику (см. текущий diff).
+- [ ] Провести валидацию на реальном железе: стрим камеры, логирование, переключение Wi‑Fi (ожидает доступа).
+- [ ] Подготовить скриншоты и дополнение `docs/operator.md` про новые вкладки UI (после аппаратного теста).
 
 ## Acceptance Criteria
 
-- CLI tool connects to ESP32 UART CLI, executes core commands, and provides structured output/streaming view.
-- Web UI displays live telemetry (mocked if hardware unavailable) and executes control commands via REST/WebSocket flows.
-- Serial abstraction shared by CLI & server with unit-test coverage for parsing and error handling.
-- Documentation updated; instructions for installation and usage are clear; dependencies managed with pnpm (frontend) and pip/pyproject (backend).
-- No changes to firmware; solution ready for hardware validation when available.
+- ESP32 прошивка поднимает Wi‑Fi, запускает HTTP‑сервер камеры и публикует расширенные диагностические данные для CLI.
+- Операторский backend обеспечивает REST/WebSocket доступ к командам, логам и настройкам камеры; CLI и web UI используют общие команды `CAMSTREAM`, `CAMCFG`.
+- Веб-интерфейс показывает живые кадры камеры, статусы компонентов, поток логов и позволяет менять настройки камеры.
+- Скрипты запуска и окружение позволяют оператору поднять стек и (при необходимости) залить прошивку одной командой.
+- Документация и план синхронизированы с реализацией; остаются явно отмеченные пункты, ожидающие аппаратной проверки.
