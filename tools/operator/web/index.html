@@ -22,24 +22,58 @@
       </div>
     </header>
 
-    <main>
-      <section id="status-panel" class="panel">
-        <div class="panel-header">
-          <h2>Status</h2>
-          <button id="refresh-status" type="button" class="btn-secondary btn-sm" aria-label="Refresh status">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+    <!-- Command Bar (sticky) -->
+    <div class="command-bar">
+      <div class="command-bar-content">
+        <div class="primary-actions">
+          <form id="start-form" class="inline-form">
+            <input 
+              id="start-task" 
+              name="task" 
+              type="text" 
+              value="default" 
+              placeholder="Task ID"
+              aria-label="Task identifier"
+            />
+            <button type="submit" class="btn-primary btn-action" title="Start task">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              Start Task
+            </button>
+          </form>
+
+          <button id="brake-button" type="button" class="btn-danger btn-action" aria-keyshortcuts="Control+B" title="Emergency stop (Ctrl+B)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <rect x="9" y="9" width="6" height="6"/>
             </svg>
-            Refresh
+            BRAKE
           </button>
         </div>
-        <div class="status-grid" id="status-grid" role="region" aria-live="polite">
-          <div class="skeleton-loader"></div>
-        </div>
-      </section>
 
-      <section id="telemetry-panel" class="panel">
-        <div class="panel-header">
+        <form id="command-form" class="inline-form command-input-group">
+          <input 
+            id="raw-command" 
+            name="command" 
+            type="text" 
+            placeholder="Enter CLI command (e.g., STATUS)" 
+            aria-label="Direct CLI command"
+          />
+          <button type="submit" class="btn-secondary" title="Send command">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+            Send
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Main Layout: Telemetry (wide) + Status (sidebar) -->
+    <main class="main-layout">
+      <section class="telemetry-section">
+        <div class="section-header">
           <h2>Live Telemetry</h2>
           <div class="legend" id="telemetry-legend" role="list"></div>
         </div>
@@ -48,60 +82,33 @@
         </div>
       </section>
 
-      <section id="controls-panel" class="panel">
-        <h2>Controls</h2>
-        
-        <div class="control-group">
-          <h3>Task Control</h3>
-          <form id="start-form">
-            <label for="start-task">
-              Task ID
-              <input id="start-task" name="task" type="text" value="default" aria-describedby="task-help" />
-              <small id="task-help">Enter task identifier or leave default</small>
-            </label>
-            <button type="submit" class="btn-primary">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
-              Start Task
-            </button>
-          </form>
-        </div>
-
-        <div class="control-group">
-          <h3>Direct Command</h3>
-          <form id="command-form">
-            <label for="raw-command">
-              Command
-              <input id="raw-command" name="command" type="text" placeholder="STATUS" aria-describedby="cmd-help" />
-              <small id="cmd-help">Enter raw ESP32 CLI command</small>
-            </label>
-            <label class="checkbox-label">
-              <input id="raise-on-error" name="raiseOnError" type="checkbox" />
-              <span>Raise on error</span>
-            </label>
-            <button type="submit" class="btn-secondary">Send Command</button>
-          </form>
-        </div>
-
-        <div class="control-group danger-zone">
-          <h3>Emergency Stop</h3>
-          <button id="brake-button" type="button" class="btn-danger" aria-keyshortcuts="Control+B">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <rect x="9" y="9" width="6" height="6"/>
+      <aside class="status-sidebar">
+        <div class="section-header">
+          <h2>Status</h2>
+          <button id="refresh-status" type="button" class="btn-icon" aria-label="Refresh status" title="Refresh status">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
             </svg>
-            BRAKE
           </button>
-          <small>Stops all actuators immediately (Ctrl+B)</small>
         </div>
-
-        <div class="output-section">
-          <h3>Command Output</h3>
-          <pre id="command-output" class="output" role="log" aria-live="polite" aria-atomic="true"></pre>
+        <div class="status-grid" id="status-grid" role="region" aria-live="polite">
+          <div class="skeleton-loader"></div>
         </div>
-      </section>
+      </aside>
     </main>
+
+    <!-- Command Output (expandable footer) -->
+    <div class="output-bar">
+      <button class="output-toggle" id="output-toggle" aria-expanded="false" aria-controls="command-output">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="18 15 12 9 6 15"/>
+        </svg>
+        <span>Command Output</span>
+      </button>
+      <div class="output-content" id="output-content" hidden>
+        <pre id="command-output" class="output" role="log" aria-live="polite" aria-atomic="true"></pre>
+      </div>
+    </div>
 
     <footer>
       <small>ESP32 link via local FastAPI gateway. Ensure the server is running on port 8000.</small>

@@ -23,9 +23,10 @@ const startForm = document.getElementById("start-form");
 const commandForm = document.getElementById("command-form");
 const startTaskInput = document.getElementById("start-task");
 const rawCommandInput = document.getElementById("raw-command");
-const raiseOnErrorInput = document.getElementById("raise-on-error");
 const brakeButton = document.getElementById("brake-button");
 const commandOutput = document.getElementById("command-output");
+const outputToggle = document.getElementById("output-toggle");
+const outputContent = document.getElementById("output-content");
 const wsStatusEl = document.getElementById("ws-status");
 const toastContainer = document.getElementById("toast-container");
 const modalOverlay = document.getElementById("modal-overlay");
@@ -304,13 +305,33 @@ commandForm.addEventListener("submit", async (event) => {
     return;
   }
   try {
-    const result = await sendCommand(command, raiseOnErrorInput.checked);
+    const result = await sendCommand(command, false);
     renderStatus(result.data || {});
     commandOutput.textContent = JSON.stringify(result, null, 2);
     showToast("Command executed", "success");
+    
+    // Auto-expand output
+    if (outputContent.hasAttribute("hidden")) {
+      outputToggle.click();
+    }
   } catch (error) {
     commandOutput.textContent = `✗ ${error.message}`;
     showToast(error.message, "error");
+    
+    // Auto-expand output on error
+    if (outputContent.hasAttribute("hidden")) {
+      outputToggle.click();
+    }
+  }
+});
+
+outputToggle.addEventListener("click", () => {
+  const isExpanded = outputToggle.getAttribute("aria-expanded") === "true";
+  outputToggle.setAttribute("aria-expanded", !isExpanded);
+  if (isExpanded) {
+    outputContent.setAttribute("hidden", "");
+  } else {
+    outputContent.removeAttribute("hidden");
   }
 });
 
