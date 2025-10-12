@@ -37,3 +37,7 @@ bool camera_http_set_resolution(framesize_t frame_size);
 bool camera_http_lookup_resolution(const char* name, framesize_t* out);
 bool camera_http_set_resolution_by_name(const char* name);
 const char* camera_http_resolution_name(framesize_t frame_size);
+
+// Sets/returns the maximum framesize supported by the hardware buffers.
+void camera_http_set_supported_max_resolution(framesize_t frame_size);
+framesize_t camera_http_get_supported_max_resolution();

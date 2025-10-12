@@ -398,5 +398,10 @@ static void cli_print_camcfg(Stream& io){
   if(!name){
     name = "UNKNOWN";
   }
-  io.printf("cam_resolution=%s cam_quality=%u\n", name, cfg.jpeg_quality);
+  framesize_t maxSize = camera_http_get_supported_max_resolution();
+  const char* maxName = camera_http_resolution_name(maxSize);
+  if(!maxName){
+    maxName = "UNKNOWN";
+  }
+  io.printf("cam_resolution=%s cam_quality=%u cam_max=%s\n", name, cfg.jpeg_quality, maxName);
 }

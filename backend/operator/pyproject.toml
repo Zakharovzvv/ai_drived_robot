@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rbm-operator-tools"
+version = "0.1.0"
+description = "Operator CLI and web backend for the RBM robot"
+requires-python = ">=3.10"
+dependencies = [
+  "pyserial>=3.5",
+  "typer>=0.9",
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "httpx>=0.24",
+  "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+rbm-operator = "backend.operator.cli:run"
+rbm-operator-server = "backend.operator.server:run"
+
+[tool.hatch.build.targets.wheel]
+sources = [".."]
+packages = ["backend"]
+
+[tool.hatch.build.targets.editable]
+sources = [".."]
+packages = ["backend"]
+
+[tool.hatch.build]
+dev-mode-dirs = ["../.."]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "../operator",
+  "pyproject.toml"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

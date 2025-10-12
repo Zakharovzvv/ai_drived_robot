@@ -1,6 +1,6 @@
 # Операторский набор инструментов (CLI + Web UI)
 
-Руководство описывает установку и эксплуатацию инструментов в каталоге `tools/operator`, которые позволяют управлять ESP32 через UART CLI и получать телеметрию в виде терминальной утилиты и веб‑панели.
+Руководство описывает установку и эксплуатацию инструментов в каталогах `backend/operator` и `frontend/web`, которые позволяют управлять ESP32 через UART CLI и получать телеметрию в виде терминальной утилиты и веб‑панели.
 
 ## 1. Требования
 
@@ -11,7 +11,7 @@
 ## 2. Подготовка Python-окружения
 
 ```bash
-cd tools/operator
+cd backend/operator
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -U pip
@@ -22,6 +22,14 @@ pip install -e .
 
 - `rbm-operator` — командная утилита для работы с UART CLI.
 - `rbm-operator-server` — FastAPI-шлюз (по умолчанию порт 8000).
+
+### Структура модулей backend
+
+- `backend/operator/server.py` — тонкий ASGI-вход, подключающий маршруты и жизненный цикл.
+- `backend/operator/api/routes.py` — HTTP/WS-эндпоинты FastAPI, построенные на зависимостях.
+- `backend/operator/services/operator_service.py` — бизнес-логика, работа с ESP32 и кэшами.
+- `backend/operator/models/api.py` — Pydantic-схемы запросов и ответов для согласования с фронтендом.
+- `backend/operator/services/dependencies.py` — единая точка создания/остановки `OperatorService` для DI.
 
 ## 3. Использование CLI
 
@@ -39,7 +47,7 @@ rbm-operator brake
 
 # Управление картой склада
 rbm-operator smap get
-rbm-operator smap set "ROW=0 COL=2 COLOR=R"
+rbm-operator smap set "R,G,B; Y,W,K; -,-,-"
 rbm-operator smap save
 ```
 
@@ -54,16 +62,16 @@ rbm-operator smap save
 1. Запустите backend (если не используется стартовый скрипт):
 
    ```bash
-   source tools/operator/.venv/bin/activate
+   source backend/operator/.venv/bin/activate
    rbm-operator-server
    ```
 
 2. В отдельном терминале установите зависимости и поднимите Vite:
 
    ```bash
-    cd tools/operator/web
-    pnpm install          # однократно
-    pnpm run dev          # dev-сервер http://localhost:5173
+   cd frontend/web
+   pnpm install          # однократно
+   pnpm run dev          # dev-сервер http://localhost:5173
    ```
 
    Proxy маршрутизирует запросы `/api` и `/ws` на `http://localhost:8000`. Для продакшен-сборки выполните `pnpm run build` и разместите содержимое `dist/` на сервере или настройте раздачу статических файлов в FastAPI.
@@ -73,31 +81,90 @@ rbm-operator smap save
    - карточки статуса с ключевыми метриками `STATUS`;
    - live-график (лифт, захват, датчики линии, напряжение батареи);
    - кнопки управления (Start, BRAKE, произвольные команды).
+   - вкладку Settings с редактором Shelf Map для конфигурации 3×3 матрицы цветов прямо с UI.
 
 ## 5. Автоматический запуск и остановка
 
-Для одновременного запуска backend и frontend используйте вспомогательные скрипты:
+Для одновременного запуска backend и frontend используйте единый скрипт в корне репозитория:
 
 ```bash
-cd tools/operator
-./start_operator_stack.sh   # стартует uvicorn + Vite
+./scripts/operator_stack.sh start     # стартует uvicorn + Vite
 
 # ... работа ...
 
-./stop_operator_stack.sh    # мягкая остановка обоих процессов
+./scripts/operator_stack.sh stop      # мягкая остановка обоих процессов
+./scripts/operator_stack.sh status    # проверка PID и путей к логам
+./scripts/operator_stack.sh restart   # последовательная остановка и запуск
 ```
 
-Скрипт `start_operator_stack.sh` проверяет наличие виртуального окружения и каталога `node_modules`, запускает сервер через `python -m tools.operator.server`, прокидывая `PYTHONPATH`. Логи сохраняются в `.operator_runtime/backend.log` и `.operator_runtime/frontend.log`. При повторном вызове выполняется проверка PID, чтобы избежать дублей.
+Скрипт проверяет наличие виртуального окружения и каталога `node_modules`, запускает сервер через `python -m backend.operator.server`, прокидывая `PYTHONPATH`, и сохраняет логи в `.operator_runtime/backend.log` и `.operator_runtime/frontend.log`. При повторном вызове выполняется проверка PID, чтобы избежать дублей.
 
 ## 6. Валидация
 
-- Unit-тесты парсеров: `source .venv/bin/activate && python -m pytest` в каталоге `tools/operator`.
+- Полный прогон тестов: `./scripts/run_all_tests.sh` из корня репозитория (скрипт автоматически ищет локальное Python-окружение и pnpm).
+- Unit-тесты backend отдельно: `source .venv/bin/activate && python -m pytest` в каталоге `backend/operator`.
 - Проверка «железом»: выполнить `rbm-operator status`, убедиться в появлении структурированных данных и отсутствии ошибок CLI; в веб‑интерфейсе убедиться, что подписка `/ws/telemetry` передает обновления.
 - Перед полевыми испытаниями повторить чек-листы из `docs/deploy-guide.md` (разделы 6–11) и проверить работу BRAKE.
 
-## 7. Частые проблемы
+## 7. Контейнеризация (Docker)
+
+Для запуска стека в Docker подготовлены отдельные контейнеры:
+
+- `docker/backend.Dockerfile` — Python 3.13 образ с установленным `rbm-operator` и запуском `uvicorn` на порту 8000.
+- `docker/frontend.Dockerfile` — многостадийная сборка: `pnpm build` статики и nginx с проксированием `/api` и `/ws` на backend.
+
+Файл `docker-compose.yml` в корне стартует оба сервиса командой:
+
+```bash
+docker compose up --build
+```
+
+Порты по умолчанию: backend `8000`, frontend `5173` (обёртка над nginx:80). Для изменения настроек обновите `docker-compose.yml` или передайте переменные окружения в `.env`.
+
+Для связи с ESP32 из контейнера задайте `OPERATOR_SERIAL_PORT` в `.env`. Значение может указывать на физическое устройство (`/dev/ttyUSB0`) при запуске на Linux с пробросом через `--device`, либо на TCP-прокси в формате `socket://host.docker.internal:3333`. На macOS/Windows удобнее поднять локальный мост (используя `socat`) и прокинуть порт в Docker:
+
+```bash
+brew install socat  # macOS
+./scripts/operator_serial_bridge.sh /dev/cu.usbmodem1101 3333
+```
+
+Мост работает до нажатия Ctrl+C. После запуска убедитесь, что в `.env` прописано `OPERATOR_SERIAL_PORT=socket://host.docker.internal:3333`, затем перезапустите стек (`./scripts/operator_stack_docker.sh restart`).
+
+Для удобства добавлен хелпер `scripts/operator_stack_docker.sh`:
+
+```bash
+./scripts/operator_stack_docker.sh build    # собрать/обновить образы
+./scripts/operator_stack_docker.sh start    # поднять стек (detached)
+./scripts/operator_stack_docker.sh status   # показать состояние контейнеров
+./scripts/operator_stack_docker.sh logs     # общие логи (Ctrl+C для выхода)
+./scripts/operator_stack_docker.sh stop     # остановить и удалить
+```
+
+## 8. Частые проблемы
 
 - **Не найден порт** — укажите `--port` и убедитесь в установке драйверов CP210/CH340.
+- **Docker не видит ESP32** — пробросьте устройство (`--device /dev/ttyUSB0`) или поднимите TCP-мост (см. пример с `socat`) и настройте `OPERATOR_SERIAL_PORT`.
 - **Нет pyserial** — активируйте виртуальное окружение и повторите `pip install -e .`.
 - **WebSocket не подключается** — проверьте, что backend слушает порт 8000, а брандмауэр не блокирует localhost.
-- **Пустые метрики** — CLI должен выводить пары `ключ=значение`. Настройте прошивку или адаптируйте `METRIC_CONFIG` в `web/src/main.js`.
+- **Пустые метрики** — CLI должен выводить пары `ключ=значение`. Настройте прошивку или адаптируйте `METRIC_CONFIG` в `frontend/web/src/constants.js`.
+
+## 9. Автоматизация тестов и pre-commit
+
+1. Сделайте скрипты исполняемыми и укажите путь к локальным хукам:
+
+   ```bash
+   chmod +x scripts/run_all_tests.sh .githooks/pre-commit
+   git config core.hooksPath .githooks
+   ```
+
+2. Установите зависимости один раз:
+
+   ```bash
+   python -m pip install -e backend/operator[dev]
+   corepack enable
+   cd frontend/web && pnpm install --frozen-lockfile
+   ```
+
+3. При каждом `git commit` хук автоматически запустит `./scripts/run_all_tests.sh`.
+
+CI на GitHub Actions (`.github/workflows/ci.yml`) выполняет те же проверки при push и pull request.

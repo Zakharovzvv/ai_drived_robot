@@ -32,6 +32,20 @@ const ResolutionEntry kResolutionTable[] = {
 };
 
 CameraHttpConfig s_config{ kDefaultFrameSize, kDefaultJpegQuality };
+size_t s_max_resolution_index = 0;
+
+size_t resolution_count() {
+  return sizeof(kResolutionTable) / sizeof(kResolutionTable[0]);
+}
+
+int find_resolution_index(framesize_t size) {
+  for (size_t i = 0; i < resolution_count(); ++i) {
+    if (kResolutionTable[i].value == size) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
 
 const ResolutionEntry* find_resolution(framesize_t size) {
   for (const auto& entry : kResolutionTable) {
@@ -80,6 +94,11 @@ esp_err_t snapshot_handler(httpd_req_t* req) {
   }
 
   httpd_resp_set_type(req, "image/jpeg");
+  // Report actual framebuffer size for diagnostics
+  char size_hdr[64];
+  snprintf(size_hdr, sizeof(size_hdr), "%ux%u", fb->width, fb->height);
+  httpd_resp_set_hdr(req, "X-Frame-Size", size_hdr);
+  Serial.printf("[CameraHTTP] Serving snapshot %ux%u, len=%u\n", fb->width, fb->height, (unsigned)jpg_len);
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
   httpd_resp_set_hdr(req, "Pragma", "no-cache");
   httpd_resp_set_hdr(req, "Expires", "0");
@@ -107,6 +126,8 @@ void camera_http_init() {
   camera_http_stop();
   s_config.frame_size = kDefaultFrameSize;
   s_config.jpeg_quality = kDefaultJpegQuality;
+  int idx = find_resolution_index(kDefaultFrameSize);
+  s_max_resolution_index = idx >= 0 ? static_cast<size_t>(idx) : 0;
 }
 
 bool camera_http_sync_sensor() {
@@ -192,6 +213,13 @@ bool camera_http_set_resolution(framesize_t frame_size) {
   if (!entry) {
     return false;
   }
+  int idx = find_resolution_index(frame_size);
+  if (idx < 0) {
+    return false;
+  }
+  if (static_cast<size_t>(idx) > s_max_resolution_index) {
+    return false;
+  }
   sensor_t* sensor = esp_camera_sensor_get();
   if (sensor) {
     if (sensor->set_framesize(sensor, frame_size) != 0) {
@@ -225,4 +253,19 @@ bool camera_http_set_resolution_by_name(const char* name) {
 const char* camera_http_resolution_name(framesize_t frame_size) {
   const ResolutionEntry* entry = find_resolution(frame_size);
   return entry ? entry->name : "UNKNOWN";
+}
+
+void camera_http_set_supported_max_resolution(framesize_t frame_size) {
+  int idx = find_resolution_index(frame_size);
+  if (idx < 0) {
+    idx = find_resolution_index(kDefaultFrameSize);
+  }
+  if (idx < 0) {
+    idx = 0;
+  }
+  s_max_resolution_index = static_cast<size_t>(idx);
+}
+
+framesize_t camera_http_get_supported_max_resolution() {
+  return kResolutionTable[s_max_resolution_index].value;
 }

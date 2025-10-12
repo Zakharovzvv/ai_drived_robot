@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Pre-commit hook to run full test suite. Enable via: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+echo "Running project tests before commit..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts"
+if ! "$SCRIPT_DIR/run_all_tests.sh"; then
+  echo "Tests failed. Commit aborted." >&2
+  exit 1
+fi
+echo "Tests passed. Proceeding with commit."
