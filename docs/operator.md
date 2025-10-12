@@ -70,8 +70,8 @@ rbm-operator smap save
 
    ```bash
    cd frontend/web
-    pnpm install          # однократно
-    pnpm run dev          # dev-сервер http://localhost:5173
+   pnpm install          # однократно
+   pnpm run dev          # dev-сервер http://localhost:5173
    ```
 
    Proxy маршрутизирует запросы `/api` и `/ws` на `http://localhost:8000`. Для продакшен-сборки выполните `pnpm run build` и разместите содержимое `dist/` на сервере или настройте раздачу статических файлов в FastAPI.
@@ -101,7 +101,8 @@ rbm-operator smap save
 
 ## 6. Валидация
 
-- Unit-тесты парсеров: `source .venv/bin/activate && python -m pytest` в каталоге `backend/operator`.
+- Полный прогон тестов: `./scripts/run_all_tests.sh` из корня репозитория (скрипт автоматически ищет локальное Python-окружение и pnpm).
+- Unit-тесты backend отдельно: `source .venv/bin/activate && python -m pytest` в каталоге `backend/operator`.
 - Проверка «железом»: выполнить `rbm-operator status`, убедиться в появлении структурированных данных и отсутствии ошибок CLI; в веб‑интерфейсе убедиться, что подписка `/ws/telemetry` передает обновления.
 - Перед полевыми испытаниями повторить чек-листы из `docs/deploy-guide.md` (разделы 6–11) и проверить работу BRAKE.
 
@@ -146,3 +147,24 @@ brew install socat  # macOS
 - **Нет pyserial** — активируйте виртуальное окружение и повторите `pip install -e .`.
 - **WebSocket не подключается** — проверьте, что backend слушает порт 8000, а брандмауэр не блокирует localhost.
 - **Пустые метрики** — CLI должен выводить пары `ключ=значение`. Настройте прошивку или адаптируйте `METRIC_CONFIG` в `frontend/web/src/constants.js`.
+
+## 9. Автоматизация тестов и pre-commit
+
+1. Сделайте скрипты исполняемыми и укажите путь к локальным хукам:
+
+   ```bash
+   chmod +x scripts/run_all_tests.sh .githooks/pre-commit
+   git config core.hooksPath .githooks
+   ```
+
+2. Установите зависимости один раз:
+
+   ```bash
+   python -m pip install -e backend/operator[dev]
+   corepack enable
+   cd frontend/web && pnpm install --frozen-lockfile
+   ```
+
+3. При каждом `git commit` хук автоматически запустит `./scripts/run_all_tests.sh`.
+
+CI на GitHub Actions (`.github/workflows/ci.yml`) выполняет те же проверки при push и pull request.

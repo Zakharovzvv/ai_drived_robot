@@ -6,9 +6,16 @@
 
 - Performed a large refactor across frontend and backend: reorganized files, updated APIs and client state handling, and cleaned tooling.
 - Files changed (summary from workspace):
-		- Modified: `.env`, `.gitignore`, `CHANGELOG.md`, `docs/deploy-guide.md`, `docs/implementation-plan.md`, `docs/operator.md`, `tools/operator/web/index.html`, `tools/operator/web/package.json`, `tools/operator/web/vite.config.js`, `frontend/web/src/constants.js`, `frontend/web/src/state/OperatorProvider.jsx`
-		- Deleted: multiple legacy operator scripts and modules under `tools/operator/` (removed during refactor)
-		- Added/Untracked: `backend/`, `docker-compose.yml`, `docker/`, `frontend/`, `scripts/` (moved/renamed project layout)
+  - Modified: `.env`, `.gitignore`, `CHANGELOG.md`, `docs/deploy-guide.md`, `docs/implementation-plan.md`, `docs/operator.md`, `tools/operator/web/index.html`, `tools/operator/web/package.json`, `tools/operator/web/vite.config.js`, `frontend/web/src/constants.js`, `frontend/web/src/state/OperatorProvider.jsx`
+  - Deleted: multiple legacy operator scripts and modules under `tools/operator/` (removed during refactor)
+  - Added/Untracked: `backend/`, `docker-compose.yml`, `docker/`, `frontend/`, `scripts/` (moved/renamed project layout)
+
+### Tooling & QA (2025-10-12)
+
+- Added unified test runner `scripts/run_all_tests.sh` that executes backend `pytest` suite and frontend `pnpm test -- --run`, auto-detecting the project virtualenv and validating prerequisites.
+- Introduced repository-local pre-commit hook (`.githooks/pre-commit`) invoking the unified runner to block commits when tests fail.
+- Documented hook enablement and environment bootstrap steps in `docs/commit-hooks.md` and updated operator docs with quick-start notes.
+- Created CI workflow `.github/workflows/ci.yml` mirroring local checks for push/PR validation (installs backend dev extras, runs pytest, installs pnpm dependencies, runs Vitest).
 
 Note: see the git diff for the full list of file moves/deletions; this changelog entry highlights the top-level structural refactor and the toast/notification fix implemented on the frontend.
 
@@ -42,7 +49,7 @@ Note: see the git diff for the full list of file moves/deletions; this changelog
 - `vision_color.cpp` настроен под распиновку OV2640 на Freenove ESP32-S3 и корректную инициализацию сенсора.
 - CLI `SMAP` переписан на универсальный обработчик (`shelf_map.cpp`) с поддержкой `GET/SET/SAVE/CLEAR`.
 
-### [2025-10-12]
+### Camera Diagnostics (2025-10-12)
 
 ### Added / Changed
 
