@@ -139,12 +139,18 @@ class ESP32Link:
                 )
 
             port_path = discover_serial_port(self._requested_port)
-            self._serial = serial.Serial(
-                port=port_path,
-                baudrate=self._baudrate,
-                timeout=self._timeout,
-                write_timeout=self._timeout,
-            )
+            try:
+                open_serial = getattr(serial, "serial_for_url", serial.Serial)
+                self._serial = open_serial(
+                    port_path,
+                    baudrate=self._baudrate,
+                    timeout=self._timeout,
+                    write_timeout=self._timeout,
+                )
+            except (SerialException, OSError) as exc:
+                self._serial = None
+                self._active_port = None
+                raise SerialNotFoundError(f"could not open port {port_path}: {exc}") from exc
             self._serial.reset_input_buffer()
             self._serial.reset_output_buffer()
             self._active_port = port_path

@@ -11,15 +11,14 @@ __pycache__/
 
 # Virtual environments
 .venv/
-tools/operator/.venv/
+backend/operator/.venv/
 
 # Node.js dependencies
 node_modules/
-tools/operator/web/node_modules/
+frontend/web/node_modules/
 
 # Operator runtime outputs
 .operator_runtime/
-tools/operator/.operator_runtime/
 
 # Logs and misc
 *.log

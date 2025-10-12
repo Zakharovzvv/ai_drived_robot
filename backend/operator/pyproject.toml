@@ -18,26 +18,27 @@ dependencies = [
 dev = [
   "pytest>=7.4",
   "httpx>=0.24",
+  "pytest-asyncio>=0.23",
 ]
 
 [project.scripts]
-rbm-operator = "tools.operator.cli:run"
-rbm-operator-server = "tools.operator.server:run"
+rbm-operator = "backend.operator.cli:run"
+rbm-operator-server = "backend.operator.server:run"
 
 [tool.hatch.build.targets.wheel]
-sources = ["../.."]
-packages = ["tools"]
+sources = [".."]
+packages = ["backend"]
 
 [tool.hatch.build.targets.editable]
-sources = ["../.."]
-packages = ["tools"]
+sources = [".."]
+packages = ["backend"]
 
 [tool.hatch.build]
 dev-mode-dirs = ["../.."]
 
 [tool.hatch.build.targets.sdist]
 include = [
-  "../tools",
+  "../operator",
   "pyproject.toml"
 ]
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from tools.operator.esp32_link import parse_key_value_lines, parse_value
+from backend.operator.esp32_link import parse_key_value_lines, parse_value
 
 
 class ParseValueTests(unittest.TestCase):

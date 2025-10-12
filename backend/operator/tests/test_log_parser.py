@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from tools.operator.log_parser import structure_log_line, structure_logs
+from backend.operator.log_parser import structure_log_line, structure_logs
 
 
 class LogParserTests(unittest.TestCase):

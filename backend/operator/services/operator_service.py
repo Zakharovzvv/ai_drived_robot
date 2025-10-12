@@ -1,4 +1,4 @@
-"""FastAPI-based operator service bridging the ESP32 CLI to HTTP/WebSocket."""
+"""Core business logic for the operator backend."""
 from __future__ import annotations
 
 import asyncio
@@ -9,73 +9,15 @@ import os
 import time
 import urllib.error
 import urllib.request
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urlparse
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from fastapi import (  # type: ignore
-    Depends,
-    FastAPI,
-    HTTPException,
-    WebSocket,
-    WebSocketDisconnect,
-)
-from fastapi.middleware.cors import CORSMiddleware  # type: ignore
-from fastapi.responses import Response  # type: ignore
-from pydantic import BaseModel  # type: ignore
+from fastapi import WebSocket
 
-from .esp32_link import CommandResult, ESP32Link, SerialNotFoundError
-from .log_parser import structure_logs
+from ..esp32_link import CommandResult, ESP32Link, SerialNotFoundError
+from ..log_parser import structure_logs
 
-logger = logging.getLogger("operator.server")
-
-
-class CommandRequest(BaseModel):
-    command: str
-    raise_on_error: bool = False
-
-
-class CommandResponse(BaseModel):
-    command: str
-    raw: list[str]
-    data: Dict[str, Any]
-
-
-class CameraConfigResponse(BaseModel):
-    resolution: str
-    quality: int
-    running: bool
-    available_resolutions: List[dict[str, Any]]
-    quality_min: int
-    quality_max: int
-
-
-class CameraConfigUpdate(BaseModel):
-    resolution: Optional[str] = None
-    quality: Optional[int] = None
-
-
-class ShelfMapPaletteEntry(BaseModel):
-    id: str
-    label: str
-    color: str
-
-
-class ShelfMapResponse(BaseModel):
-    grid: List[List[str]]
-    palette: List[ShelfMapPaletteEntry]
-    raw: str
-    timestamp: float
-    source: str
-    persisted: Optional[bool] = None
-
-
-class ShelfMapUpdateRequest(BaseModel):
-    grid: List[List[str]]
-    persist: bool = False
-
-
-class ShelfMapResetRequest(BaseModel):
-    persist: bool = False
+logger = logging.getLogger("operator.service")
 
 
 class CameraNotConfiguredError(RuntimeError):
@@ -101,7 +43,29 @@ class OperatorService:
         camera_transport: Optional[str] = None,
         camera_stream_interval: Optional[float] = None,
     ) -> None:
-        self._link = ESP32Link(port=port, baudrate=baudrate, timeout=timeout)
+        port_override = port
+        if not port_override:
+            env_port = os.getenv("OPERATOR_SERIAL_PORT")
+            if env_port and env_port.strip():
+                port_override = env_port.strip()
+
+        baud_override = baudrate
+        env_baud = os.getenv("OPERATOR_SERIAL_BAUDRATE")
+        if env_baud:
+            try:
+                baud_override = int(env_baud)
+            except ValueError:
+                logger.warning("Invalid OPERATOR_SERIAL_BAUDRATE=%s; using %s", env_baud, baudrate)
+
+        timeout_override = timeout
+        env_timeout = os.getenv("OPERATOR_SERIAL_TIMEOUT")
+        if env_timeout:
+            try:
+                timeout_override = float(env_timeout)
+            except ValueError:
+                logger.warning("Invalid OPERATOR_SERIAL_TIMEOUT=%s; using %s", env_timeout, timeout)
+
+        self._link = ESP32Link(port=port_override, baudrate=baud_override, timeout=timeout_override)
         self._poll_command = poll_command
         self._poll_interval = poll_interval
         self._poll_task: Optional[asyncio.Task[None]] = None
@@ -184,7 +148,7 @@ class OperatorService:
                 command,
                 raise_on_error=raise_on_error,
             )
-        except SerialNotFoundError as exc:
+        except SerialNotFoundError:
             raise
         except Exception as exc:  # pragma: no cover - safeguard
             logger.exception("Failed to run command '%s'", command)
@@ -215,7 +179,6 @@ class OperatorService:
                     raise CameraSnapshotError("Camera snapshot response was empty")
 
                 content_type = response.headers.get("Content-Type", self._default_camera_content_type)
-                # FastAPI only needs the media-type component.
                 media_type = content_type.split(";", 1)[0].strip() or self._default_camera_content_type
                 return payload, media_type
         except urllib.error.HTTPError as exc:  # pragma: no cover - network dependent
@@ -224,8 +187,6 @@ class OperatorService:
             raise CameraSnapshotError(str(exc.reason or exc)) from exc
 
     def describe(self) -> dict[str, Any]:
-        """Return runtime metadata for diagnostics and UI."""
-
         transport = self._determine_camera_transport()
         port = self._link.active_port or self._link.requested_port
         status_fresh = self._status_is_recent()
@@ -290,7 +251,7 @@ class OperatorService:
     async def camera_set_config(
         self, *, resolution: Optional[str] = None, quality: Optional[int] = None
     ) -> dict[str, Any]:
-        parts: list[str] = []
+        parts: List[str] = []
         if quality is not None:
             q_min, q_max = self._camera_quality_range
             clamped = max(q_min, min(q_max, int(quality)))
@@ -388,7 +349,6 @@ class OperatorService:
             if upper.startswith("SMAP="):
                 raise RuntimeError(stripped)
             if "=" in stripped:
-                # skip unrelated key=value telemetry fragments
                 continue
             if ";" not in stripped and "," not in stripped:
                 continue
@@ -511,9 +471,7 @@ class OperatorService:
         if self._camera_snapshot_override:
             return self._camera_snapshot_override, "override"
 
-        effective = status
-        if status is None:
-            effective = self._effective_status_snapshot()
+        effective = status if status is not None else self._effective_status_snapshot()
         data = effective or {}
         ip = data.get("wifi_ip") or data.get("wifi_ip_addr")
         streaming = data.get("cam_streaming")
@@ -657,7 +615,6 @@ class OperatorService:
         else:
             status_fresh = self._status_is_recent(now)
             if not status_fresh and not lines:
-                # No reply from STATUS means the controller is likely offline.
                 self._last_status_error = "no_data"
 
         snapshot = dict(self._last_status) if status_fresh else {}
@@ -697,27 +654,23 @@ class OperatorService:
         diag["camera"]["snapshot_url"] = snapshot_url
         diag["camera"]["streaming"] = bool(status_fresh and snapshot.get("cam_streaming"))
         diag["camera"]["source"] = source
-        # Expose current camera settings reported by STATUS (if fresh)
         diag["camera"]["resolution"] = snapshot.get("cam_resolution") if status_fresh else None
         diag["camera"]["quality"] = snapshot.get("cam_quality") if status_fresh else None
         diag["camera"]["cam_max"] = snapshot.get("cam_max") if status_fresh else None
-        # Try to enrich diagnostics with the camera config fetched via CAMCFG
         try:
             camcfg = await self.camera_get_config()
             if isinstance(camcfg, dict):
-                # camera_get_config returns resolution/quality/available_resolutions etc.
                 diag["camera"]["resolution"] = camcfg.get("resolution") or diag["camera"].get("resolution")
-                diag["camera"]["quality"] = camcfg.get("quality") if camcfg.get("quality") is not None else diag["camera"].get("quality")
-                # expose available_resolutions and max_resolution for UI
+                diag["camera"]["quality"] = (
+                    camcfg.get("quality") if camcfg.get("quality") is not None else diag["camera"].get("quality")
+                )
                 if camcfg.get("available_resolutions") is not None:
                     diag["camera"]["available_resolutions"] = camcfg.get("available_resolutions")
                 if camcfg.get("max_resolution") is not None:
                     diag["camera"]["max_resolution"] = camcfg.get("max_resolution")
-                # running state from camcfg is authoritative for configuration
                 if camcfg.get("running") is not None:
                     diag["camera"]["streaming"] = bool(camcfg.get("running"))
         except SerialNotFoundError:
-            # If serial is not available, leave camera fields as-is
             pass
         except Exception:
             logger.exception("Failed to fetch camera config for diagnostics")
@@ -897,232 +850,8 @@ class OperatorService:
             await asyncio.sleep(self._camera_stream_interval)
 
 
-service = OperatorService()
-app = FastAPI(title="RBM Operator Service", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    await service.start()
-
-
-@app.on_event("shutdown")
-async def _shutdown() -> None:
-    await service.stop()
-
-
-async def get_service() -> OperatorService:
-    return service
-
-
-@app.get("/api/status", response_model=CommandResponse)
-async def api_status(svc: OperatorService = Depends(get_service)) -> CommandResponse:
-    try:
-        result = await svc.run_command("status", raise_on_error=False)
-    except SerialNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    return CommandResponse(command="status", raw=result.raw, data=result.data)
-
-
-@app.post("/api/command", response_model=CommandResponse)
-async def api_command(
-    request: CommandRequest,
-    svc: OperatorService = Depends(get_service),
-) -> CommandResponse:
-    try:
-        result = await svc.run_command(
-            request.command, raise_on_error=request.raise_on_error
-        )
-    except SerialNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    return CommandResponse(command=request.command, raw=result.raw, data=result.data)
-
-
-@app.websocket("/ws/telemetry")
-async def telemetry_ws(
-    websocket: WebSocket,
-    svc: OperatorService = Depends(get_service),
-) -> None:
-    await websocket.accept()
-    queue = await svc.register_client()
-    try:
-        while True:
-            payload = await queue.get()
-            await websocket.send_text(json.dumps(payload))
-    except WebSocketDisconnect:  # pragma: no cover - network event
-        pass
-    finally:
-        await svc.unregister_client(queue)
-
-
-@app.websocket("/ws/camera")
-async def camera_ws(
-    websocket: WebSocket,
-    svc: OperatorService = Depends(get_service),
-) -> None:
-    await websocket.accept()
-    try:
-        await svc.stream_camera_frames(websocket)
-    except WebSocketDisconnect:  # pragma: no cover - network event
-        pass
-
-
-@app.get("/api/camera/snapshot")
-async def api_camera_snapshot(svc: OperatorService = Depends(get_service)) -> Response:
-    try:
-        payload, media_type = await svc.get_camera_snapshot()
-    except CameraNotConfiguredError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except CameraSnapshotError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    return Response(content=payload, media_type=media_type)
-
-
-@app.get("/api/camera/config", response_model=CameraConfigResponse)
-async def api_camera_config(svc: OperatorService = Depends(get_service)) -> CameraConfigResponse:
-    try:
-        config = await svc.camera_get_config()
-    except SerialNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return CameraConfigResponse(**config)
-
-
-@app.post("/api/camera/config", response_model=CameraConfigResponse)
-async def api_camera_config_update(
-    request: CameraConfigUpdate,
-    svc: OperatorService = Depends(get_service),
-) -> CameraConfigResponse:
-    if request.resolution is None and request.quality is None:
-        raise HTTPException(status_code=400, detail="No parameters provided")
-    try:
-        config = await svc.camera_set_config(
-            resolution=request.resolution,
-            quality=request.quality,
-        )
-    except SerialNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return CameraConfigResponse(**config)
-
-
-@app.get("/api/shelf-map", response_model=ShelfMapResponse)
-async def api_shelf_map(svc: OperatorService = Depends(get_service)) -> ShelfMapResponse:
-    try:
-        payload = await svc.shelf_get_map()
-    except SerialNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return ShelfMapResponse(**payload)
-
-
-@app.put("/api/shelf-map", response_model=ShelfMapResponse)
-async def api_shelf_map_update(
-    request: ShelfMapUpdateRequest,
-    svc: OperatorService = Depends(get_service),
-) -> ShelfMapResponse:
-    try:
-        payload = await svc.shelf_set_map(request.grid, persist=request.persist)
-    except SerialNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return ShelfMapResponse(**payload)
-
-
-@app.post("/api/shelf-map/reset", response_model=ShelfMapResponse)
-async def api_shelf_map_reset(
-    request: ShelfMapResetRequest,
-    svc: OperatorService = Depends(get_service),
-) -> ShelfMapResponse:
-    try:
-        payload = await svc.shelf_reset_map(persist=request.persist)
-    except SerialNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return ShelfMapResponse(**payload)
-
-
-class ServiceInfo(BaseModel):
-    serial_port: Optional[str]
-    camera_snapshot_url: Optional[str]
-    camera_snapshot_source: str
-    camera_transport: str
-    camera_streaming: bool
-    status_fresh: bool
-
-
-@app.get("/api/info", response_model=ServiceInfo)
-async def api_info(svc: OperatorService = Depends(get_service)) -> ServiceInfo:
-    return ServiceInfo(**svc.describe())
-
-
-@app.get("/api/logs")
-async def api_logs(
-    limit: int = 200,
-    svc: OperatorService = Depends(get_service),
-) -> dict[str, Any]:
-    limit = max(1, min(limit, 1000))
-    return {"entries": svc.get_recent_logs(limit)}
-
-
-@app.get("/api/diagnostics")
-async def api_diagnostics(svc: OperatorService = Depends(get_service)) -> dict[str, Any]:
-    return await svc.diagnostics()
-
-
-@app.websocket("/ws/logs")
-async def logs_ws(
-    websocket: WebSocket,
-    svc: OperatorService = Depends(get_service),
-) -> None:
-    await websocket.accept()
-    try:
-        snapshot = svc.get_recent_logs()
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "snapshot",
-                    "entries": snapshot,
-                }
-            )
-        )
-        queue = await svc.register_log_client()
-        try:
-            while True:
-                message = await queue.get()
-                await websocket.send_text(json.dumps(message))
-        except WebSocketDisconnect:  # pragma: no cover - network event
-            pass
-        finally:
-            await svc.unregister_log_client(queue)
-    except WebSocketDisconnect:  # pragma: no cover - network event
-        pass
-
-
-def run() -> None:  # pragma: no cover - manual execution helper
-    """Launch the FastAPI app using uvicorn."""
-
-    import uvicorn  # type: ignore
-
-    uvicorn.run("tools.operator.server:app", host="0.0.0.0", port=8000, reload=False)
-
-
-if __name__ == "__main__":  # pragma: no cover - CLI execution helper
-    run()
+__all__ = [
+    "CameraNotConfiguredError",
+    "CameraSnapshotError",
+    "OperatorService",
+]

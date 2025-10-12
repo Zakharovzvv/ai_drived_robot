@@ -49,15 +49,29 @@ ai_drived_robot/
 │       │   └── src/       (дубли для layout PIO)
 │       └── uno/
 │           └── main.cpp   (прошивка исполнительного контроллера)
-└── tools/
-    └── operator/
-        ├── cli.py, esp32_link.py, server.py
-        ├── start_operator_stack.sh / stop_operator_stack.sh
-        ├── pyproject.toml, tests/
-        └── web/ (Vite + Chart.js фронтенд)
+├── backend/
+│   └── operator/
+│       ├── api/ (FastAPI маршруты)
+│       ├── services/ (OperatorService + зависимости)
+│       ├── models/ (Pydantic-схемы REST/WS)
+│       ├── cli.py, esp32_link.py
+│       ├── server.py (ASGI entrypoint)
+│       ├── pyproject.toml, tests/
+│       └── __init__.py
+├── docker/
+│   ├── backend.Dockerfile
+│   ├── frontend.Dockerfile
+│   └── frontend.nginx.conf
+├── scripts/
+│   └── operator_stack.sh     (запуск backend/frontend)
+└── frontend/
+  └── web/
+    ├── package.json, vite.config.js
+    ├── src/ (React + React Router UI)
+    └── public/
 ```
 
-> Директория `.venv` для Python и папка `node_modules/` создаются по месту (внутри `tools/operator/`) и не входят в репозиторий.
+> Директория `.venv` для Python и папка `node_modules/` создаются по месту (соответственно в `backend/operator/` и `frontend/web/`) и не входят в репозиторий.
 
 ### 2.2 platformio.ini (готовый шаблон)
 
@@ -243,20 +257,36 @@ pio device list
 
 ## 13) Операторский интерфейс (CLI + Web UI)
 
-Каталог `tools/operator/` содержит полностью автономный стек для взаимодействия с ESP32:
+Каталоги `backend/operator/` и `frontend/web/` содержат полностью автономный стек для взаимодействия с ESP32:
 
 * **CLI (`rbm-operator`)** — позволяет опрашивать статус, подписываться на телеметрию, выполнять команду BRAKE и управлять картой склада.
 * **FastAPI-шлюз (`rbm-operator-server`)** — обеспечивает REST/WebSocket доступ к UART.
-* **Web UI (`tools/operator/web`)** — дашборд на Vite + Chart.js с графиками и управляющими кнопками.
+* **Web UI (`frontend/web`)** — дашборд на Vite + React с графиками и управляющими кнопками.
 
 Рекомендуемый порядок запуска:
 
 ```bash
-cd tools/operator
-./start_operator_stack.sh        # поднимает backend и фронтенд
+./scripts/operator_stack.sh start      # поднимает backend и фронтенд
 
 # После работы
-./stop_operator_stack.sh
+./scripts/operator_stack.sh stop
+# Статус и перезапуск при необходимости
+./scripts/operator_stack.sh status
+./scripts/operator_stack.sh restart
 ```
 
-Скрипты автоматически используют виртуальное окружение (`.venv`) и проверяют наличие `node_modules`. Если нужно запустить вручную — следуйте новому руководству `docs/operator.md` (разделы 2–7).
+Сценарий автоматически использует виртуальное окружение (`backend/operator/.venv`) и проверяет наличие `node_modules`. Если нужно запустить вручную — следуйте руководству `docs/operator.md` (разделы 2–7).
+
+### 13.1) Запуск в Docker
+
+Полностью контейнеризованный сценарий доступен через `docker-compose.yml` в корне:
+
+```bash
+docker compose up --build
+```
+
+Команда собирает `docker/backend.Dockerfile` (uvicorn на `0.0.0.0:8000`) и `docker/frontend.Dockerfile` (Vite build + nginx, публикующийся на `5173`). Nginx пробрасывает `/api` и `/ws` в сервис `backend`, поэтому веб-клиент продолжает работать с относительными путями. Переменные окружения подхватываются из `.env`.
+
+Для остановки выполните `docker compose down`. После изменения исходников перезапустите `docker compose up --build` или предварительно `docker compose build`.
+
+CLI-обёртка `./scripts/operator_stack_docker.sh` объединяет типовые команды (`build`, `start`, `status`, `logs`, `stop`, `restart`).

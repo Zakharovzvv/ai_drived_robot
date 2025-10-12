@@ -1,9 +1,9 @@
 import asyncio
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
-from tools.operator.server import app, service
+from backend.operator.server import app, service
 
 
 @pytest.mark.asyncio
@@ -22,7 +22,9 @@ async def test_camera_config_get_returns_defaults(monkeypatch):
 
     monkeypatch.setattr(service, "camera_get_config", fake_camera_get_config)
 
-    async with AsyncClient(app=app, base_url="http://testserver") as client:
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         response = await client.get("/api/camera/config")
 
     assert response.status_code == 200

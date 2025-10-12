@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tools.operator.esp32_link import CommandResult
-from tools.operator.server import OperatorService
+from backend.operator.esp32_link import CommandResult
+from backend.operator.server import OperatorService
 
 
 @pytest.mark.asyncio

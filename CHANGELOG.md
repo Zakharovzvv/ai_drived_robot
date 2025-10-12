@@ -1,19 +1,31 @@
 # Changelog
 
+## [2025-10-12]
+
+### Refactor (2025-10-12)
+
+- Performed a large refactor across frontend and backend: reorganized files, updated APIs and client state handling, and cleaned tooling.
+- Files changed (summary from workspace):
+		- Modified: `.env`, `.gitignore`, `CHANGELOG.md`, `docs/deploy-guide.md`, `docs/implementation-plan.md`, `docs/operator.md`, `tools/operator/web/index.html`, `tools/operator/web/package.json`, `tools/operator/web/vite.config.js`, `frontend/web/src/constants.js`, `frontend/web/src/state/OperatorProvider.jsx`
+		- Deleted: multiple legacy operator scripts and modules under `tools/operator/` (removed during refactor)
+		- Added/Untracked: `backend/`, `docker-compose.yml`, `docker/`, `frontend/`, `scripts/` (moved/renamed project layout)
+
+Note: see the git diff for the full list of file moves/deletions; this changelog entry highlights the top-level structural refactor and the toast/notification fix implemented on the frontend.
+
 ## [2025-10-11]
 
 ### Added
 
-- Operator CLI (`tools/operator/cli.py`) with командами `status`, `telemetry --stream`, `start-task`, `brake`, `smap`.
-- FastAPI backend (`tools/operator/server.py`) с REST/WebSocket API и фоновой рассылкой телеметрии.
-- Веб-клиент на Vite + Chart.js (`tools/operator/web/`) с графиками и кнопками управления.
-- Скрипты `start_operator_stack.sh` и `stop_operator_stack.sh` для пакетного запуска и остановки сервиса.
+- Operator CLI (`backend/operator/cli.py`) with командами `status`, `telemetry --stream`, `start-task`, `brake`, `smap`.
+- FastAPI backend (`backend/operator/server.py`) с REST/WebSocket API и фоновой рассылкой телеметрии.
+- Веб-клиент на Vite + React Router (`frontend/web/`) с графиками и кнопками управления.
+- Скрипт `scripts/operator_stack.sh` для пакетного запуска, остановки и перезапуска сервиса.
 - Корневой `.gitignore`, исключающий виртуальные окружения, `node_modules`, логи и артефакты рантайма.
 
 ### Fixed
 
-- Улучшен дизайн веб‑консоли оператора (`tools/operator/web/`): восстановлена работа вкладок (telemetry, camera, status, output), исправлен вертикальный/горизонтальный порядок панели действий — теперь кнопки располагаются корректно на горизонтальной панели, исправлены стили и responsive-поведение в `src/style.css`.
-- Обновлена логика и небольшие правки JS для стабильного переключения вкладок и управления камерой (`tools/operator/web/src/main.js`).
+- Улучшен дизайн веб‑консоли оператора (`frontend/web/`): восстановлена работа вкладок (telemetry, camera, status, output), исправлен вертикальный/горизонтальный порядок панели действий — теперь кнопки располагаются корректно на горизонтальной панели, исправлены стили и responsive-поведение в `src/style.css`.
+- Обновлена логика и небольшие правки JS для стабильного переключения вкладок и управления камерой (`frontend/web/src/main.jsx`).
 
 ### Documentation
 
@@ -29,6 +41,7 @@
 - `i2c_link` получил `i2c_ping_uno`, переиспользуемые хелперы чтения/записи и новые прототипы в `shelf_map.hpp`.
 - `vision_color.cpp` настроен под распиновку OV2640 на Freenove ESP32-S3 и корректную инициализацию сенсора.
 - CLI `SMAP` переписан на универсальный обработчик (`shelf_map.cpp`) с поддержкой `GET/SET/SAVE/CLEAR`.
+
 ### [2025-10-12]
 
 ### Added / Changed
@@ -37,13 +50,14 @@
 - Firmware: `vision_color.cpp` updated to log an initial test frame after `esp_camera_fb_get()`; camera initialization iterates candidate frame sizes and sets a `cam_max` that is reported over CLI.
 - Backend: diagnostics enriched — `/api/diagnostics` now includes `camera.resolution`, `camera.quality`, `camera.available_resolutions`, and `camera.max_resolution` (fetched from CAMCFG when serial is available). The backend also uses STATUS to determine `camera.snapshot_url` and streaming state.
 - Frontend: Camera status card updated to show `Resolution` and `Quality` in the Status tab; camera settings form continues to show available resolutions and quality controls.
+- Tooling: added `scripts/operator_serial_bridge.sh` helper to expose a host serial device to Docker via `socat`, and the default `.env` now points `OPERATOR_SERIAL_PORT` at `socket://host.docker.internal:3333` for container workflows on macOS/Windows.
 
 ### Logs / Parser (2025-10-12)
 
 - Backend: structured log support — logs are now parsed into structured entries (`timestamp`, `time_iso`, `source`, `device`, `parameter`, `value`, `raw`) and `/api/logs` + `/ws/logs` return `entries` payloads; the server attaches stable `id` values for deduping and ordering.
-- Parser: added `tools/operator/log_parser.py` to normalize serial lines into structured records and refined classification rules so unprefixed `key=value` CLI responses are attributed to `esp32/system` while explicit `[UNO]` prefixed lines remain `arduino`.
+- Parser: added `backend/operator/log_parser.py` to normalize serial lines into structured records and refined classification rules so unprefixed `key=value` CLI responses are attributed to `esp32/system` while explicit `[UNO]` prefixed lines remain `arduino`.
 - Frontend: Logs tab replaced the raw textarea with a searchable, sortable and filterable table; sticky, opaque header and bounded height with internal scrolling were added for better UX; JS now normalizes API/WS structured entries and maintains filter state across updates.
-- Tests: unit tests added/updated for the log parser (`tools/operator/tests/test_log_parser.py`).
+- Tests: unit tests added/updated for the log parser (`backend/operator/tests/test_log_parser.py`).
 - Operational: operator stack restarted to pick up parser and web client changes during validation.
 
 ### Notes
@@ -59,17 +73,21 @@
 
 ### Operator Backend & Tooling
 
-- `tools/operator/server.py` расширен REST/WS-эндпоинтами: `/api/camera/config`, `/api/camera/snapshot`, `/api/diagnostics`, `/api/logs`, `/ws/camera`, `/ws/logs`; добавлены опросы статуса камеры, диагностика Wi-Fi и рассылка логов.
-- `tools/operator/esp32_link.py` усилил таймауты, отслеживание активного порта и буферизацию логов для стриминга.
-- `tools/operator/pyproject.toml` настроен на сборку/установку из корня, унифицирован запуск pytest.
-- Скрипт `start_operator_stack.sh` подхватывает переменные окружения из `.env`, добавлен шаблон `.env` с параметрами камеры.
-- Добавлен тест `tools/operator/tests/test_camera_config.py` для проверки конфигурации камеры через API.
+- `backend/operator/server.py` расширен REST/WS-эндпоинтами: `/api/camera/config`, `/api/camera/snapshot`, `/api/diagnostics`, `/api/logs`, `/ws/camera`, `/ws/logs`; добавлены опросы статуса камеры, диагностика Wi-Fi и рассылка логов.
+- `backend/operator/esp32_link.py` усилил таймауты, отслеживание активного порта и буферизацию логов для стриминга.
+- `backend/operator/pyproject.toml` настроен на сборку/установку из корня, унифицирован запуск pytest.
+- Скрипт `scripts/operator_stack.sh` подхватывает переменные окружения из `.env`, добавлен шаблон `.env` с параметрами камеры; старые `backend/operator/start_operator_stack.sh` и `stop_operator_stack.sh` удалены как дублирующие.
+- Добавлен тест `backend/operator/tests/test_camera_config.py` для проверки конфигурации камеры через API.
+- Backend: код FastAPI разбит на пакеты `api/`, `services/`, `models/`; Pydantic-схемы вынесены в отдельный модуль, логика `OperatorService` изолирована от маршрутов, `server.py` теперь служит только точкой входа.
+- Tests: добавлен набор `backend/operator/tests/test_api_routes.py`, покрывающий базовые REST сценарии (`/api/status`, `/api/camera/config`, `/api/command`) с использованием заглушки `OperatorService`.
+- Docker: добавлены `docker/backend.Dockerfile`, `docker/frontend.Dockerfile`, `docker/frontend.nginx.conf` и `docker-compose.yml` для запуска backend/frontend в контейнерах.
+- CLI: добавлен `scripts/operator_stack_docker.sh` для управления контейнерным стеком (`build/start/status/logs/stop/restart`).
 
 ### Web UI
 
-- `tools/operator/web/index.html` получил новые вкладки Settings/Logs, элементы управления стримом и бейдж статуса камеры.
-- `tools/operator/web/src/main.js` переработан: модульная инициализация, работа с diagnostics/info, управление стримом, настройка камеры и WebSocket-логами.
-- `tools/operator/web/src/style.css` обновлён стилями для бейджей транспорта камеры, сетки настроек, логов и расширенных карточек статуса.
+- `frontend/web/index.html` получил новые маршруты Settings/Logs, элементы управления стримом и бейдж статуса камеры.
+- `frontend/web/src/main.jsx` переработан: модульная инициализация, работа с diagnostics/info, управление стримом, настройка камеры и WebSocket-логами.
+- `frontend/web/src/style.css` обновлён стилями для бейджей транспорта камеры, сетки настроек, логов и расширенных карточек статуса.
 
 ## [2025-09-01]
 
