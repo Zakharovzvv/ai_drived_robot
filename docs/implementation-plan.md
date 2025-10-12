@@ -61,6 +61,13 @@
 - [x] Реализовать UI во вкладке Settings: визуальный редактор 3×3 с выбором цветов и кнопкой сохранения/сброса.
 - [x] Добавить тесты Python/JS (unit и e2e mock) на парсинг/валидацию матрицы и вызовы REST API.
 
+### 9. Structured Log Viewer
+
+- [x] Backend: преобразовать поток логов в структурированные записи (поля timestamp/source/device/parameter/value/raw) и обновить REST/WS ответы.
+- [x] Frontend: заменить текстовый вывод логов на таблицу с поиском, сортировкой и фильтрами, подключив новые данные.
+- [x] UI/Styling: добавить адаптивные стили для таблицы логов и панели фильтров.
+- [ ] Validation: вручную проверить загрузку снапшота, поток обновлений, поиск и фильтры на вкладке Logs.
+
 ## Recent changes (2025-10-12)
 
 - Firmware: added X-Frame-Size header to camera snapshot responses and initial test-frame logging in `vision_color` to help validate real framebuffer dimensions. Camera init iterates candidate frame sizes and reports a `cam_max` value via CLI.

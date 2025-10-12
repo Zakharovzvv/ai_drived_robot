@@ -76,7 +76,13 @@ let cameraFeed;
 let cameraPlaceholder;
 let cameraTransportBadge;
 let toggleCameraStreamButton;
-let logOutput;
+let logTableBody;
+let logSearchInput;
+let logFilterSource;
+let logFilterDevice;
+let logFilterParameter;
+let logTable;
+let logSortHeaders;
 let refreshLogs;
 let settingsCameraForm;
 let settingsCameraResolution;
@@ -115,6 +121,11 @@ let cameraTogglePending = false;
 let logSocket = null;
 let logReconnectTimeout = null;
 let logStreamDesired = false;
+const LOG_MAX_ENTRIES = 600;
+let logEntries = [];
+let logEntryMap = new Map();
+let logFilters = { search: "", source: "all", device: "all", parameter: "all" };
+let logSort = { column: "timestamp", direction: "desc" };
 let cameraConfigState = null;
 let cameraSettingsBusy = false;
 let activeTabName = null;
@@ -1182,41 +1193,264 @@ function handleTelemetryMessage(payload) {
   }
 }
 
-function formatLogEntry(entry) {
-  if (!entry) return "";
-  const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toLocaleTimeString() : "--:--:--";
-  return `[${timestamp}] ${entry.line ?? ""}`;
+function normalizeLogEntry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const timestamp = Number(entry.timestamp);
+  const resolvedTimestamp = Number.isFinite(timestamp) ? timestamp : Date.now() / 1000;
+  const rawId = entry.id || `${resolvedTimestamp}-${entry.parameter || "log"}`;
+  const timeIso = typeof entry.time_iso === "string"
+    ? entry.time_iso
+    : new Date(resolvedTimestamp * 1000).toISOString();
+  return {
+    id: String(rawId),
+    timestamp: resolvedTimestamp,
+    timeIso,
+    source: String(entry.source || "unknown"),
+    device: String(entry.device || "unknown"),
+    parameter: String(entry.parameter || "message"),
+    value: entry.value,
+    raw: typeof entry.raw === "string" ? entry.raw : "",
+  };
 }
 
-function appendLogEntries(entries, { replace = false } = {}) {
-  if (!logOutput || !Array.isArray(entries) || !entries.length) {
-    if (replace && logOutput) {
-      logOutput.textContent = "";
+function formatOptionLabel(value) {
+  if (!value) return "";
+  const upper = value.toUpperCase();
+  if (upper === "ESP32" || upper === "UNO" || upper === "I2C") {
+    return upper;
+  }
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function setSelectOptions(selectEl, options, currentValue = "all") {
+  if (!selectEl) return currentValue;
+  const unique = Array.from(new Set(options)).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const previous = currentValue === undefined ? selectEl.value : currentValue;
+  const fragment = document.createDocumentFragment();
+
+  const allOption = document.createElement("option");
+  allOption.value = "all";
+  allOption.textContent = "All";
+  fragment.appendChild(allOption);
+
+  unique.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = formatOptionLabel(value);
+    fragment.appendChild(option);
+  });
+
+  selectEl.innerHTML = "";
+  selectEl.appendChild(fragment);
+
+  if (unique.includes(previous)) {
+    selectEl.value = previous;
+    return previous;
+  }
+
+  selectEl.value = "all";
+  return "all";
+}
+
+function updateLogFilterOptions() {
+  const sources = [];
+  const devices = [];
+  const parameters = [];
+
+  logEntries.forEach((entry) => {
+    if (entry.source) sources.push(entry.source);
+    if (entry.device) devices.push(entry.device);
+    if (entry.parameter) parameters.push(entry.parameter);
+  });
+
+  logFilters.source = setSelectOptions(logFilterSource, sources, logFilters.source);
+  logFilters.device = setSelectOptions(logFilterDevice, devices, logFilters.device);
+  logFilters.parameter = setSelectOptions(logFilterParameter, parameters, logFilters.parameter);
+}
+
+function formatLogValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return String(value);
+}
+
+function formatLogTimestamp(timestamp) {
+  if (!Number.isFinite(timestamp)) {
+    return "--";
+  }
+  const date = new Date(timestamp * 1000);
+  const datePart = date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const timePart = date.toLocaleTimeString(undefined, {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return `${datePart} ${timePart}`;
+}
+
+function compareLogEntries(a, b, column) {
+  if (column === "timestamp") {
+    return a.timestamp - b.timestamp;
+  }
+  const left = formatLogValue(a[column] ?? "").toLowerCase();
+  const right = formatLogValue(b[column] ?? "").toLowerCase();
+  return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function applyLogFiltersAndSort() {
+  const searchTerm = (logFilters.search || "").trim().toLowerCase();
+  const filtered = logEntries.filter((entry) => {
+    if (logFilters.source !== "all" && entry.source !== logFilters.source) {
+      return false;
     }
+    if (logFilters.device !== "all" && entry.device !== logFilters.device) {
+      return false;
+    }
+    if (logFilters.parameter !== "all" && entry.parameter !== logFilters.parameter) {
+      return false;
+    }
+    if (searchTerm) {
+      const haystack = [
+        entry.parameter,
+        entry.device,
+        entry.source,
+        formatLogValue(entry.value),
+        entry.raw,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(searchTerm);
+    }
+    return true;
+  });
+
+  const sorted = filtered.slice().sort((a, b) => {
+    const result = compareLogEntries(a, b, logSort.column);
+    return logSort.direction === "asc" ? result : -result;
+  });
+  return sorted;
+}
+
+function updateSortIndicators() {
+  if (!logSortHeaders) return;
+  logSortHeaders.forEach((header) => {
+    const column = header.dataset.sort;
+    if (!column) return;
+    const isActive = logSort.column === column;
+    header.classList.toggle("sorted", isActive);
+    header.classList.toggle("sorted-desc", isActive && logSort.direction === "desc");
+    header.setAttribute("aria-sort", isActive ? (logSort.direction === "asc" ? "ascending" : "descending") : "none");
+  });
+}
+
+function renderLogTable() {
+  if (!logTableBody) return;
+  const rows = applyLogFiltersAndSort();
+  logTableBody.innerHTML = "";
+
+  if (!rows.length) {
+    const emptyRow = document.createElement("tr");
+    emptyRow.className = "log-empty";
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.textContent = "No logs yet…";
+    emptyRow.appendChild(cell);
+    logTableBody.appendChild(emptyRow);
+    updateSortIndicators();
     return;
   }
 
-  const content = entries.map((entry) => formatLogEntry(entry)).filter(Boolean).join("\n");
-  if (replace) {
-    logOutput.textContent = content ? `${content}\n` : "";
-  } else {
-    if (logOutput.textContent && !logOutput.textContent.endsWith("\n")) {
-      logOutput.textContent += "\n";
-    }
-    logOutput.textContent += content ? `${content}\n` : "";
-  }
-  logOutput.scrollTop = logOutput.scrollHeight;
+  rows.forEach((entry) => {
+    const tr = document.createElement("tr");
+    tr.title = entry.raw || "";
+
+    const timeCell = document.createElement("td");
+    const timeEl = document.createElement("time");
+    timeEl.dateTime = entry.timeIso;
+    timeEl.textContent = formatLogTimestamp(entry.timestamp);
+    timeCell.appendChild(timeEl);
+    tr.appendChild(timeCell);
+
+    const sourceCell = document.createElement("td");
+    const sourceBadge = document.createElement("span");
+    const sourceKey = (entry.source || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    sourceBadge.className = `log-chip log-chip-${sourceKey}`;
+    sourceBadge.textContent = formatOptionLabel(entry.source);
+    sourceCell.appendChild(sourceBadge);
+    tr.appendChild(sourceCell);
+
+    const deviceCell = document.createElement("td");
+    deviceCell.textContent = formatOptionLabel(entry.device);
+    tr.appendChild(deviceCell);
+
+    const parameterCell = document.createElement("td");
+    parameterCell.textContent = entry.parameter;
+    tr.appendChild(parameterCell);
+
+    const valueCell = document.createElement("td");
+    valueCell.textContent = formatLogValue(entry.value);
+    tr.appendChild(valueCell);
+
+    logTableBody.appendChild(tr);
+  });
+
+  updateSortIndicators();
 }
 
-async function fetchLogsSnapshot(limit = 200) {
-  if (!logOutput) return;
+function ingestLogEntries(entries, { replace = false } = {}) {
+  if (replace) {
+    logEntryMap = new Map();
+    logEntries = [];
+  }
+  if (Array.isArray(entries)) {
+    entries.forEach((entry) => {
+      const normalized = normalizeLogEntry(entry);
+      if (!normalized) return;
+      logEntryMap.set(normalized.id, normalized);
+    });
+  }
+
+  const sorted = Array.from(logEntryMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+  const trimmed = sorted.slice(-LOG_MAX_ENTRIES);
+  logEntryMap = new Map(trimmed.map((entry) => [entry.id, entry]));
+  logEntries = trimmed;
+  updateLogFilterOptions();
+  renderLogTable();
+}
+
+function updateLogSort(column) {
+  if (!column) return;
+  if (logSort.column === column) {
+    logSort.direction = logSort.direction === "asc" ? "desc" : "asc";
+  } else {
+    logSort = { column, direction: column === "timestamp" ? "desc" : "asc" };
+  }
+  renderLogTable();
+}
+
+async function fetchLogsSnapshot(limit = LOG_MAX_ENTRIES) {
+  if (!logTableBody) return;
   try {
     const response = await fetch(`${API_BASE}/api/logs?limit=${limit}`);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     const payload = await response.json();
-    appendLogEntries(payload.lines || [], { replace: true });
+    ingestLogEntries(payload.entries || [], { replace: true });
   } catch (error) {
     console.error("Log snapshot error:", error);
     showToast(`Failed to fetch logs: ${error.message}`, "error");
@@ -1224,7 +1458,7 @@ async function fetchLogsSnapshot(limit = 200) {
 }
 
 function connectLogStream() {
-  if (!logStreamDesired || !logOutput) return;
+  if (!logStreamDesired || !logTableBody) return;
   if (
     logSocket &&
     (logSocket.readyState === WebSocket.OPEN || logSocket.readyState === WebSocket.CONNECTING)
@@ -1246,9 +1480,9 @@ function connectLogStream() {
     try {
       const payload = JSON.parse(event.data);
       if (payload.type === "snapshot") {
-        appendLogEntries(payload.lines || [], { replace: true });
+        ingestLogEntries(payload.entries || [], { replace: true });
       } else if (payload.type === "log") {
-        appendLogEntries([payload]);
+        ingestLogEntries(payload.entries || []);
       }
     } catch (error) {
       console.error("Failed to parse log payload:", error);
@@ -1355,6 +1589,48 @@ function bindUiEvents() {
     refreshLogs.addEventListener("click", () => {
       fetchLogsSnapshot();
       showToast("Logs refreshed", "info");
+    });
+  }
+
+  if (logSearchInput) {
+    logSearchInput.addEventListener("input", (event) => {
+      logFilters.search = event.target.value || "";
+      renderLogTable();
+    });
+  }
+
+  if (logFilterSource) {
+    logFilterSource.addEventListener("change", (event) => {
+      logFilters.source = event.target.value || "all";
+      renderLogTable();
+    });
+  }
+
+  if (logFilterDevice) {
+    logFilterDevice.addEventListener("change", (event) => {
+      logFilters.device = event.target.value || "all";
+      renderLogTable();
+    });
+  }
+
+  if (logFilterParameter) {
+    logFilterParameter.addEventListener("change", (event) => {
+      logFilters.parameter = event.target.value || "all";
+      renderLogTable();
+    });
+  }
+
+  if (logSortHeaders && logSortHeaders.length) {
+    logSortHeaders.forEach((header) => {
+      header.addEventListener("click", () => {
+        updateLogSort(header.dataset.sort);
+      });
+      header.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          updateLogSort(header.dataset.sort);
+        }
+      });
     });
   }
 
@@ -1524,6 +1800,7 @@ function switchTab(tabName) {
   if (tabName === "logs") {
     logStreamDesired = true;
     connectLogStream();
+    renderLogTable();
   } else {
     logStreamDesired = false;
     disconnectLogStream();
@@ -1718,7 +1995,13 @@ function captureDomReferences() {
   cameraPlaceholder = document.getElementById("camera-placeholder");
   cameraTransportBadge = document.getElementById("camera-transport-badge");
   toggleCameraStreamButton = document.getElementById("toggle-camera-stream");
-  logOutput = document.getElementById("log-output");
+  logTableBody = document.getElementById("log-table-body");
+  logTable = document.querySelector(".log-table");
+  logSearchInput = document.getElementById("log-search-input");
+  logFilterSource = document.getElementById("log-filter-source");
+  logFilterDevice = document.getElementById("log-filter-device");
+  logFilterParameter = document.getElementById("log-filter-parameter");
+  logSortHeaders = logTable ? logTable.querySelectorAll("th[data-sort]") : null;
   refreshLogs = document.getElementById("refresh-logs");
   settingsCameraForm = document.getElementById("camera-settings-form");
   settingsCameraResolution = document.getElementById("camera-settings-resolution");
@@ -1766,7 +2049,8 @@ function init() {
   fetchServiceInfo();
   connectWebSocket();
 
-  if (logOutput) {
+  if (logTableBody) {
+    renderLogTable();
     fetchLogsSnapshot();
   }
 

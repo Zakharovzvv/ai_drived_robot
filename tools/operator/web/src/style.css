@@ -711,6 +711,184 @@ body {
   font-style: italic;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+.log-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.log-search {
+  flex: 1;
+  min-width: 200px;
+}
+
+.log-search input[type="search"] {
+  width: 100%;
+  padding: 0.65rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 0.9375rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.log-search input[type="search"]:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(11, 114, 133, 0.1);
+}
+
+.log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.log-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.log-filters select {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 0.875rem;
+  min-width: 140px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.log-filters select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(11, 114, 133, 0.1);
+}
+
+.log-table-container {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 60vh;
+}
+
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+}
+
+.log-table th,
+.log-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-table thead th {
+  background: #f1f5f9;
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  position: sticky;
+  top: 0;
+  user-select: none;
+  z-index: 1;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.08);
+}
+
+.log-table thead th.sorted::after {
+  content: "\25B2";
+  position: absolute;
+  right: 0.75rem;
+  font-size: 0.675rem;
+  color: var(--color-text-muted);
+}
+
+.log-table thead th.sorted.sorted-desc::after {
+  content: "\25BC";
+}
+
+.log-table tbody tr:hover {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.log-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.log-table .log-empty td {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.log-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--color-text);
+  text-transform: uppercase;
+}
+
+.log-chip-esp32 {
+  background: rgba(37, 99, 235, 0.15);
+  color: #1d4ed8;
+}
+
+.log-chip-arduino {
+  background: rgba(22, 163, 74, 0.18);
+  color: #166534;
+}
+
+.log-chip-unknown {
+  background: rgba(121, 85, 72, 0.18);
+  color: #78350f;
+}
+
+@media (max-width: 900px) {
+  .log-table {
+    min-width: auto;
+  }
+
+  .log-filters {
+    width: 100%;
+  }
+
+  .log-filters label {
+    flex: 1;
+  }
+}
+
 /* Legend */
 .legend {
   display: flex;

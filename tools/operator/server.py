@@ -24,6 +24,7 @@ from fastapi.responses import Response  # type: ignore
 from pydantic import BaseModel  # type: ignore
 
 from .esp32_link import CommandResult, ESP32Link, SerialNotFoundError
+from .log_parser import structure_logs
 
 logger = logging.getLogger("operator.server")
 
@@ -110,6 +111,7 @@ class OperatorService:
         self._log_clients: Set[asyncio.Queue[dict[str, Any]]] = set()
         self._log_clients_lock = asyncio.Lock()
         self._log_task: Optional[asyncio.Task[None]] = None
+        self._log_sequence = 0
         override = (
             camera_snapshot_url
             if camera_snapshot_url is not None
@@ -756,14 +758,26 @@ class OperatorService:
                 await queue.put(payload)
 
     def get_recent_logs(self, limit: int = 200) -> List[dict[str, Any]]:
-        entries = self._link.recent_logs(limit)
-        return [
-            {
-                "timestamp": timestamp,
-                "line": line,
-            }
-            for timestamp, line in entries
-        ]
+        limit = max(1, min(limit, 1000))
+        raw_entries = self._link.recent_logs(limit * 4)
+        structured = structure_logs(raw_entries)
+        if len(structured) > limit:
+            structured = structured[-limit:]
+        return self._attach_log_ids(structured)
+
+    def _attach_log_ids(self, entries: List[dict[str, Any]]) -> List[dict[str, Any]]:
+        results: List[dict[str, Any]] = []
+        for entry in entries:
+            item = dict(entry)
+            timestamp = item.get("timestamp")
+            if not isinstance(timestamp, (int, float)):
+                timestamp = time.time()
+                item["timestamp"] = timestamp
+            identifier = f"{int(timestamp * 1000)}-{self._log_sequence}"
+            self._log_sequence = (self._log_sequence + 1) % 1_000_000_000
+            item["id"] = identifier
+            results.append(item)
+        return results
 
     async def register_log_client(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=200)
@@ -778,20 +792,20 @@ class OperatorService:
     async def _broadcast_logs(self, entries: List[dict[str, Any]]) -> None:
         if not entries:
             return
+        message = {"type": "log", "entries": entries}
         async with self._log_clients_lock:
             if not self._log_clients:
                 return
             for queue in list(self._log_clients):
-                for entry in entries:
-                    while True:
+                while True:
+                    try:
+                        queue.put_nowait(message)
+                        break
+                    except asyncio.QueueFull:
                         try:
-                            queue.put_nowait(entry)
+                            queue.get_nowait()
+                        except asyncio.QueueEmpty:
                             break
-                        except asyncio.QueueFull:
-                            try:
-                                queue.get_nowait()
-                            except asyncio.QueueEmpty:
-                                break
 
     async def _log_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -801,15 +815,10 @@ class OperatorService:
                 logger.warning("Log streaming paused: %s", exc)
                 entries = []
             if entries:
-                payload = [
-                    {
-                        "type": "log",
-                        "timestamp": ts,
-                        "line": line,
-                    }
-                    for ts, line in entries
-                ]
-                await self._broadcast_logs(payload)
+                structured = structure_logs(entries)
+                if structured:
+                    structured = self._attach_log_ids(structured)
+                    await self._broadcast_logs(structured)
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=0.25)
             except asyncio.TimeoutError:
@@ -1070,7 +1079,7 @@ async def api_logs(
     svc: OperatorService = Depends(get_service),
 ) -> dict[str, Any]:
     limit = max(1, min(limit, 1000))
-    return {"lines": svc.get_recent_logs(limit)}
+    return {"entries": svc.get_recent_logs(limit)}
 
 
 @app.get("/api/diagnostics")
@@ -1090,15 +1099,15 @@ async def logs_ws(
             json.dumps(
                 {
                     "type": "snapshot",
-                    "lines": snapshot,
+                    "entries": snapshot,
                 }
             )
         )
         queue = await svc.register_log_client()
         try:
             while True:
-                entry = await queue.get()
-                await websocket.send_text(json.dumps(entry))
+                message = await queue.get()
+                await websocket.send_text(json.dumps(message))
         except WebSocketDisconnect:  # pragma: no cover - network event
             pass
         finally:
