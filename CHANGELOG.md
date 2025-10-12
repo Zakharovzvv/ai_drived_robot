@@ -38,6 +38,14 @@
 - Backend: diagnostics enriched — `/api/diagnostics` now includes `camera.resolution`, `camera.quality`, `camera.available_resolutions`, and `camera.max_resolution` (fetched from CAMCFG when serial is available). The backend also uses STATUS to determine `camera.snapshot_url` and streaming state.
 - Frontend: Camera status card updated to show `Resolution` and `Quality` in the Status tab; camera settings form continues to show available resolutions and quality controls.
 
+### Logs / Parser (2025-10-12)
+
+- Backend: structured log support — logs are now parsed into structured entries (`timestamp`, `time_iso`, `source`, `device`, `parameter`, `value`, `raw`) and `/api/logs` + `/ws/logs` return `entries` payloads; the server attaches stable `id` values for deduping and ordering.
+- Parser: added `tools/operator/log_parser.py` to normalize serial lines into structured records and refined classification rules so unprefixed `key=value` CLI responses are attributed to `esp32/system` while explicit `[UNO]` prefixed lines remain `arduino`.
+- Frontend: Logs tab replaced the raw textarea with a searchable, sortable and filterable table; sticky, opaque header and bounded height with internal scrolling were added for better UX; JS now normalizes API/WS structured entries and maintains filter state across updates.
+- Tests: unit tests added/updated for the log parser (`tools/operator/tests/test_log_parser.py`).
+- Operational: operator stack restarted to pick up parser and web client changes during validation.
+
 ### Notes
 
 - The backend forwards the camera snapshot URL and stream state discovered via STATUS; the UI reads diagnostics to populate the Camera card. If the browser cache serves an older JS bundle you may need to hard-reload the page to see the updated card text.
