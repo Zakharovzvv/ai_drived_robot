@@ -90,6 +90,16 @@ body {
   animation: none;
 }
 
+.status-indicator.warn {
+  background: rgba(245, 158, 11, 0.25);
+  color: #fff9db;
+}
+
+.status-indicator.warn .status-dot {
+  background: var(--color-warning);
+  animation: pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }

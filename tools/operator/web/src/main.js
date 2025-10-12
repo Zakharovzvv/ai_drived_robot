@@ -118,17 +118,63 @@ function createChart(context) {
 
 const datasetMap = new Map();
 
-// ==================== Utilities ====================
-function updateWSStatus(status) {
+const headerStatusState = {
+  phase: "connecting",
+  robotConnected: false,
+  medium: null,
+  ip: null,
+  stale: true,
+};
+
+function renderHeaderStatus() {
   if (!wsStatusEl) return;
-  wsStatusEl.className = `status-indicator ${status}`;
-  const textMap = {
-    connected: "Connected",
-    connecting: "Connecting...",
-    disconnected: "Disconnected",
-  };
-  wsStatusEl.querySelector(".status-text").textContent = textMap[status] || status;
+  const { phase, robotConnected, medium, ip, stale } = headerStatusState;
+  const classNames = ["status-indicator"];
+  let text = "Connecting...";
+
+  if (phase === "disconnected") {
+    classNames.push("disconnected");
+    text = "Server Link Lost";
+  } else if (!robotConnected) {
+    if (phase === "connecting") {
+      classNames.push("connecting");
+      text = "Connecting...";
+    } else {
+      classNames.push("disconnected");
+      text = "Robot Offline";
+    }
+  } else if (stale) {
+    classNames.push("warn");
+    text = "Robot Status Stale";
+  } else {
+    classNames.push("connected");
+    if (medium === "wifi") {
+      text = `Robot Online • Wi-Fi${ip ? ` (${ip})` : ""}`;
+    } else if (medium === "type-c") {
+      text = "Robot Online • Type-C";
+    } else {
+      text = "Robot Online";
+    }
+  }
+
+  wsStatusEl.className = classNames.join(" ");
+  const textEl = wsStatusEl.querySelector(".status-text");
+  if (textEl) {
+    textEl.textContent = text;
+  }
 }
+
+function setHeaderStatus(update = {}) {
+  Object.assign(headerStatusState, update);
+  renderHeaderStatus();
+}
+
+function setWsPhase(phase) {
+  headerStatusState.phase = phase;
+  renderHeaderStatus();
+}
+
+// ==================== Utilities ====================
 
 function showToast(message, type = "info") {
   if (!toastContainer) return;
@@ -352,6 +398,7 @@ async function fetchDiagnostics() {
   } catch (error) {
     console.error("Diagnostics fetch error:", error);
     showToast(`Failed to fetch diagnostics: ${error.message}`, "error");
+    setHeaderStatus({ robotConnected: false, medium: null, ip: null, stale: true });
   }
 }
 
@@ -666,7 +713,30 @@ function renderDiagnostics(diagnostics) {
   const wifi = diagnostics.wifi || {};
   const camera = diagnostics.camera || {};
   const status = diagnostics.status || {};
+  const meta = diagnostics.meta || {};
   const diagTimestamp = diagnostics.timestamp ? new Date(diagnostics.timestamp * 1000).toLocaleTimeString() : null;
+  const statusFresh =
+    meta.status_fresh !== undefined ? Boolean(meta.status_fresh) : Boolean(serial.connected || wifi.connected === true);
+
+  const wifiConnected = statusFresh && wifi.connected === true;
+  const serialConnected = statusFresh && serial.connected === true;
+  const robotConnected = wifiConnected || serialConnected;
+  const connectionMedium = wifiConnected ? "wifi" : serialConnected ? "type-c" : null;
+  const connectionIp = wifiConnected && typeof wifi.ip === "string" ? wifi.ip : null;
+
+  setHeaderStatus({
+    robotConnected,
+    medium: connectionMedium,
+    ip: connectionIp,
+    stale: !statusFresh,
+  });
+
+  const serialStatusErrorDetail =
+    serial.status_error === "no_data"
+      ? "Status error: no data from ESP32"
+      : serial.status_error
+      ? `Status error: ${serial.status_error}`
+      : null;
 
   if (typeof camera.streaming === "boolean") {
     serviceCameraStreaming = camera.streaming;
@@ -691,6 +761,11 @@ function renderDiagnostics(diagnostics) {
         diagTimestamp && `Updated: ${diagTimestamp}`,
         serial.active_port ? `Port: ${serial.active_port}` : serial.requested_port ? `Requested: ${serial.requested_port}` : "Auto detect",
         serial.error && `Error: ${serial.error}`,
+        serialStatusErrorDetail,
+        typeof serial.status_age_s === "number" && Number.isFinite(serial.status_age_s)
+          ? `Last update: ${serial.status_age_s.toFixed(1)} s ago`
+          : null,
+        serial.stale ? "Status stale" : null,
       ],
     })
   );
@@ -724,6 +799,8 @@ function renderDiagnostics(diagnostics) {
       value: camera.configured ? "Configured" : "Missing",
       tone: camera.configured ? "ok" : "warn",
       details: [
+        camera.resolution && `Resolution: ${camera.resolution}`,
+        camera.quality !== undefined && `Quality: ${camera.quality}`,
         camera.transport && `Transport: ${camera.transport}`,
         camera.snapshot_url && `Snapshot: ${camera.snapshot_url}`,
         camera.streaming !== undefined && `Streaming: ${camera.streaming ? "ON" : "OFF"}`,
@@ -742,12 +819,21 @@ function renderDiagnostics(diagnostics) {
     statusDetails.push(`ODO L/R: ${status.odo_left}/${status.odo_right}`);
   }
   if (status.status_error) statusDetails.push(`Error: ${status.status_error}`);
+  if (!statusFresh) {
+    statusDetails.push("No fresh STATUS data");
+  }
+  if (meta.status_error && meta.status_error !== "no_data") {
+    statusDetails.push(`Status error: ${meta.status_error}`);
+  }
+
+  const statusCardValue = statusFresh ? (status.status_error ? "Errors" : "Nominal") : "Unavailable";
+  const statusCardTone = statusFresh ? (status.status_error ? "warn" : "default") : "warn";
 
   cards.push(
     createStatusCard({
       title: "STATUS Snapshot",
-      value: status.status_error ? "Errors" : "Nominal",
-      tone: status.status_error ? "warn" : "default",
+      value: statusCardValue,
+      tone: statusCardTone,
       details: statusDetails,
     })
   );
@@ -762,6 +848,7 @@ function handleTelemetryMessage(payload) {
   }
   if (payload.error) {
     console.error("Telemetry error:", payload.error);
+    setHeaderStatus({ robotConnected: false, medium: null, ip: null, stale: true });
   }
 }
 
@@ -882,14 +969,19 @@ function disconnectLogStream() {
 
 // ==================== WebSocket ====================
 function connectWebSocket() {
-  if (wsConnection && wsConnection.readyState === WebSocket.OPEN) return;
+  if (
+    wsConnection &&
+    (wsConnection.readyState === WebSocket.OPEN || wsConnection.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
 
-  updateWSStatus("connecting");
+  setWsPhase("connecting");
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${protocol}://${window.location.host}/ws/telemetry`);
 
   socket.addEventListener("open", () => {
-    updateWSStatus("connected");
+    setWsPhase("connected");
     showToast("WebSocket connected", "success");
     if (wsReconnectTimeout) {
       clearTimeout(wsReconnectTimeout);
@@ -907,7 +999,7 @@ function connectWebSocket() {
   });
 
   socket.addEventListener("close", () => {
-    updateWSStatus("disconnected");
+    setWsPhase("disconnected");
     wsConnection = null;
     wsReconnectTimeout = setTimeout(connectWebSocket, WS_RECONNECT_DELAY_MS);
   });
@@ -1300,6 +1392,7 @@ function captureDomReferences() {
 
 function init() {
   captureDomReferences();
+  renderHeaderStatus();
   updateCameraToggleControls();
   updateCameraQualityDisplayFromControl();
 

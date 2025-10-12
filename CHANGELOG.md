@@ -29,6 +29,18 @@
 - `i2c_link` получил `i2c_ping_uno`, переиспользуемые хелперы чтения/записи и новые прототипы в `shelf_map.hpp`.
 - `vision_color.cpp` настроен под распиновку OV2640 на Freenove ESP32-S3 и корректную инициализацию сенсора.
 - CLI `SMAP` переписан на универсальный обработчик (`shelf_map.cpp`) с поддержкой `GET/SET/SAVE/CLEAR`.
+### [2025-10-12]
+
+### Added / Changed
+
+- Firmware: snapshot diagnostics — snapshot handler now reports the actual framebuffer size via an `X-Frame-Size` HTTP header and the camera initialization logs the first test frame dimensions. This helps reconcile reported camera resolution with the actual served image.
+- Firmware: `vision_color.cpp` updated to log an initial test frame after `esp_camera_fb_get()`; camera initialization iterates candidate frame sizes and sets a `cam_max` that is reported over CLI.
+- Backend: diagnostics enriched — `/api/diagnostics` now includes `camera.resolution`, `camera.quality`, `camera.available_resolutions`, and `camera.max_resolution` (fetched from CAMCFG when serial is available). The backend also uses STATUS to determine `camera.snapshot_url` and streaming state.
+- Frontend: Camera status card updated to show `Resolution` and `Quality` in the Status tab; camera settings form continues to show available resolutions and quality controls.
+
+### Notes
+
+- The backend forwards the camera snapshot URL and stream state discovered via STATUS; the UI reads diagnostics to populate the Camera card. If the browser cache serves an older JS bundle you may need to hard-reload the page to see the updated card text.
 
 ### Operator Backend & Tooling
 

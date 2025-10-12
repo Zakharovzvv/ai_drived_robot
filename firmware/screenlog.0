@@ -1,0 +1,260 @@
+[ESP32] Boot
+[WiFi] Connecting to 'Road5'
+......
+[WiFi] Connected, IP=192.168.0.72
+[ESP32] Camera buffers provisioned for base frame SVGA (9) (psram=yes)
+[ESP32] SHELF_MAP: K,W,Y; G,B,R; -,-,-
+Guru Meditation Error: Core  0 panic'ed (Unhandled debug exception). 
+Debug exception reason: Stack canary watchpoint triggered (cam_task) 
+Core  0 register dump:
+PC      : 0x40378499  PS      : 0x00060d36  A0      : 0x80378597  A1      : 0x3fcaec20  
+A2      : 0x00000054  A3      : 0x00001800  A4      : 0x3fcf0300  A5      : 0x00000000  
+A6      : 0x3fca35c8  A7      : 0x3fcaf070  A8      : 0x00000000  A9      : 0x3fcaed20  
+A10     : 0x3fc95f24  A11     : 0x00000000  A12     : 0x00060f20  A13     : 0x00000000  
+A14     : 0x00000006  A15     : 0xff000000  SAR     : 0x00000004  EXCCAUSE: 0x00000001  
+EXCVADDR: 0x00000000  LBEG    : 0x400556d5  LEND    : 0x400556e5  LCOUNT  : 0xfffffffd  
+
+
+Backtrace: 0x40378496:0x3fcaec20 0x40378594:0x3fcaec50 0x40383a6d:0x3fcaec70 0x4037de69:0x3fcaec90 0x4037e14c:0x3fcaecb0 0x40379898:0x3fcaecd0 0x403798c6:0x3fcaecf0 0x40379a05:0x3fcaed20 0x420164f6:0x3fcaed40 0x4201553d:0x3fcaed60 0x42014d99:0x3fcaed80 0x4207a4b1:0x3fcaeda0 0x4207935e:0x3fcaedc0 0x420793e6:0x3fcaede0 0x42079e41:0x3fcaee10 0x4208522d:0x3fcaee40 0x42080cc3:0x3fcaee60 0x42080e39:0x3fcaf170 0x4208dfd5:0x3fcaf1a0 0x42033f7e:0x3fcaf1d0 0x42034013:0x3fcaf200 0x42035e12:0x3fcaf280
+
+
+
+
+ELF file SHA256: 42543827a47d7594
+
+Rebooting...
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0xc (RTC_SW_CPU_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40377adc
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3808,len:0x4bc
+load:0x403c9700,len:0xbd8
+load:0x403cc700,len:0x2a0c
+entry 0x403c98d0
+[ESP32] Boot
+[WiFi] Connecting to 'Road5'
+.....
+[WiFi] Connected, IP=192.168.0.72
+[ESP32] UNO not responding; automation disabled
+[ESP32] Camera buffers provisioned for base frame SVGA (9) (psram=yes)
+[ESP32] SHELF_MAP: K,W,Y; G,B,R; -,-,-
+Guru Meditation Error: Core  0 panic'ed (Unhandled debug exception). 
+Debug exception reason: Stack canary watchpoint triggered (cam_task) 
+Core  0 register dump:
+PC      : 0x40378499  PS      : 0x00060d36  A0      : 0x80378597  A1      : 0x3fcaec40  
+A2      : 0x00000054  A3      : 0x00001800  A4      : 0x3fcf0300  A5      : 0x00000000  
+A6      : 0x3fca35c8  A7      : 0x3fcaf090  A8      : 0x00000000  A9      : 0x3fcaed40  
+A10     : 0x3fc95f24  A11     : 0x00000000  A12     : 0x00060d20  A13     : 0x00000000  
+A14     : 0x00000006  A15     : 0xff000000  SAR     : 0x00000004  EXCCAUSE: 0x00000001  
+EXCVADDR: 0x00000000  LBEG    : 0x400556d5  LEND    : 0x400556e5  LCOUNT  : 0xfffffffd  
+
+
+Backtrace: 0x40378496:0x3fcaec40 0x40378594:0x3fcaec70 0x40383a6d:0x3fcaec90 0x4037de69:0x3fcaecb0 0x4037e14c:0x3fcaecd0 0x40379898:0x3fcaecf0 0x403798c6:0x3fcaed10 0x40379a05:0x3fcaed40 0x420164f6:0x3fcaed60 0x4201553d:0x3fcaed80 0x42014d99:0x3fcaeda0 0x4207a4b1:0x3fcaedc0 0x4207935e:0x3fcaede0 0x420793e6:0x3fcaee00 0x42079e41:0x3fcaee30 0x4208522d:0x3fcaee60 0x42080cc3:0x3fcaee80 0x42080e39:0x3fcaf190 0x4208dfd5:0x3fcaf1c0 0x42033f7e:0x3fcaf1f0 0x42034013:0x3fcaf220 0x42035e12:0x3fcaf2a0
+
+
+
+
+ELF file SHA256: 42543827a47d7594
+
+Rebooting...
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0xc (RTC_SW_CPU_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40377adc
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3808,len:0x4bc
+load:0x403c9700,len:0xbd8
+load:0x403cc700,len:0x2a0c
+entry 0x403c98d0
+[ESP32] Boot
+[WiFi] Connecting to 'Road5'
+......
+[WiFi] Connected, IP=192.168.0.72
+[ESP32] UNO not responding; automation disabled
+[ESP32] Camera buffers provisioned for base frame SVGA (9) (psram=yes)
+[ESP32] SHELF_MAP: K,W,Y; G,B,R; -,-,-
+Guru Meditation Error: Core  0 panic'ed (Unhandled debug exception). 
+Debug exception reason: Stack canary watchpoint triggered (cam_task) 
+Core  0 register dump:
+PC      : 0x40378499  PS      : 0x00060d36  A0      : 0x80378597  A1      : 0x3fcaec40  
+A2      : 0x00000054  A3      : 0x00001800  A4      : 0x3fcf0300  A5      : 0x00000000  
+A6      : 0x3fca35c8  A7      : 0x3fcaf090  A8      : 0x00000000  A9      : 0x3fcaed40  
+A10     : 0x3fc95f24  A11     : 0x00000000  A12     : 0x00060d20  A13     : 0x00000000  
+A14     : 0x00000006  A15     : 0xff000000  SAR     : 0x00000004  EXCCAUSE: 0x00000001  
+EXCVADDR: 0x00000000  LBEG    : 0x400556d5  LEND    : 0x400556e5  LCOUNT  : 0xfffffffd  
+
+
+Backtrace: 0x40378496:0x3fcaec40 0x40378594:0x3fcaec70 0x40383a6d:0x3fcaec90 0x4037de69:0x3fcaecb0 0x4037e14c:0x3fcaecd0 0x40379898:0x3fcaecf0 0x403798c6:0x3fcaed10 0x40379a05:0x3fcaed40 0x420164f6:0x3fcaed60 0x4201553d:0x3fcaed80 0x42014d99:0x3fcaeda0 0x4207a4b1:0x3fcaedc0 0x4207935e:0x3fcaede0 0x420793e6:0x3fcaee00 0x42079e41:0x3fcaee30 0x4208522d:0x3fcaee60 0x42080cc3:0x3fcaee80 0x42080e39:0x3fcaf190 0x4208dfd5:0x3fcaf1c0 0x42033f7e:0x3fcaf1f0 0x42034013:0x3fcaf220 0x42035e12:0x3fcaf2a0
+
+
+
+
+ELF file SHA256: 42543827a47d7594
+
+Rebooting...
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0xc (RTC_SW_CPU_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40377adc
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3808,len:0x4bc
+load:0x403c9700,len:0xbd8
+load:0x403cc700,len:0x2a0c
+entry 0x403c98d0
+[ESP32] Boot
+[WiFi] Connecting to 'Road5'
+.....[ESP32] Boot
+[WiFi] Connecting to 'Road5'
+.......
+[WiFi] Connected, IP=192.168.0.72
+[ESP32] Camera buffers provisioned for base frame VGA (8) (psram=yes)
+[ESP32] SHELF_MAP: K,W,Y; G,B,R; -,-,-
+Guru Meditation Error: Core  0 panic'ed (Unhandled debug exception). 
+Debug exception reason: Stack canary watchpoint triggered (cam_task) 
+Core  0 register dump:
+PC      : 0x40378499  PS      : 0x00060d36  A0      : 0x80378597  A1      : 0x3fcae740  
+A2      : 0x00000054  A3      : 0x00001800  A4      : 0x3fcf0300  A5      : 0x00000000  
+A6      : 0x3fca35c8  A7      : 0x3fcaeb90  A8      : 0x00000000  A9      : 0x3fcae840  
+A10     : 0x3fc95f24  A11     : 0x00000000  A12     : 0x00060d20  A13     : 0x00000000  
+A14     : 0x00000006  A15     : 0xff000000  SAR     : 0x00000004  EXCCAUSE: 0x00000001  
+EXCVADDR: 0x00000000  LBEG    : 0x400556d5  LEND    : 0x400556e5  LCOUNT  : 0xfffffffd  
+
+
+Backtrace: 0x40378496:0x3fcae740 0x40378594:0x3fcae770 0x40383a6d:0x3fcae790 0x4037de69:0x3fcae7b0 0x4037e14c:0x3fcae7d0 0x40379898:0x3fcae7f0 0x403798c6:0x3fcae810 0x40379a05:0x3fcae840 0x420164f6:0x3fcae860 0x4201553d:0x3fcae880 0x42014d99:0x3fcae8a0 0x4207a4b1:0x3fcae8c0 0x4207935e:0x3fcae8e0 0x420793e6:0x3fcae900 0x42079e41:0x3fcae930 0x4208522d:0x3fcae960 0x42080cc3:0x3fcae980 0x42080e39:0x3fcaec90 0x4208dfd5:0x3fcaecc0 0x42033f7e:0x3fcaecf0 0x42034013:0x3fcaed20 0x42035e12:0x3fcaeda0
+
+
+
+
+ELF file SHA256: 20597af94137ef0e
+
+Rebooting...
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0xc (RTC_SW_CPU_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40377adc
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3808,len:0x4bc
+load:0x403c9700,len:0xbd8
+load:0x403cc700,len:0x2a0c
+entry 0x403c98d0
+[ESP32] Boot
+[WiFi] Connecting to 'Road5'
+.....
+[WiFi] Connected, IP=192.168.0.72
+[ESP32] UNO not responding; automation disabled
+[ESP32] Camera buffers provisioned for base frame VGA (8) (psram=yes)
+[ESP32] SHELF_MAP: K,W,Y; G,B,R; -,-,-
+Guru Meditation Error: Core  0 panic'ed (Unhandled debug exception). 
+Debug exception reason: Stack canary watchpoint triggered (cam_task) 
+Core  0 register dump:
+PC      : 0x403806ff  PS      : 0x00060936  A0      : 0x8037dd1a  A1      : 0x3fcae740  
+A2      : 0x3fcaf0ec  A3      : 0xb33fffff  A4      : 0x0000abab  A5      : 0x00060923  
+A6      : 0x00060923  A7      : 0x0000cdcd  A8      : 0xb33fffff  A9      : 0xffffffff  
+A10     : 0x3fcaf0a0  A11     : 0x00001800  A12     : 0x3fca3d28  A13     : 0x00000001  
+A14     : 0x02caf0ec  A15     : 0x00ffffff  SAR     : 0x00000006  EXCCAUSE: 0x00000001  
+EXCVADDR: 0x00000000  LBEG    : 0x400556d5  LEND    : 0x400556e5  LCOUNT  : 0xfffffffd  
+
+
+Backtrace: 0x403806fc:0x3fcae740 0x4037dd17:0x3fcae780 0x4037de8e:0x3fcae7a0 0x4037e14c:0x3fcae7c0 0x40379898:0x3fcae7e0 0x403798c6:0x3fcae800 0x40379a05:0x3fcae830 0x420164f6:0x3fcae850 0x4201553d:0x3fcae870 0x42014d99:0x3fcae890 0x4207a4b1:0x3fcae8b0 0x4207935e:0x3fcae8d0 0x420793e6:0x3fcae8f0 0x42079e41:0x3fcae920 0x4208522d:0x3fcae950 0x42080cc3:0x3fcae970 0x42080e39:0x3fcaec80 0x4208dfd5:0x3fcaecb0 0x42033f7e:0x3fcaece0 0x42034013:0x3fcaed10 0x42035e12:0x3fcaed90
+
+
+
+
+ELF file SHA256: 20597af94137ef0e
+
+Rebooting...
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0xc (RTC_SW_CPU_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40377adc
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3808,len:0x4bc
+load:0x403c9700,len:0xbd8
+load:0x403cc700,len:0x2a0c
+entry 0x403c98d0
+[ESP32] Boot
+[WiFi] Connecting to 'Road5'
+......
+[WiFi] Connected, IP=192.168.0.72
+[ESP32] UNO not responding; automation disabled
+m=yes)
+[ESP32] SHELF_MAP: K,W,Y; G,B,R; -,-,-
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[ESP32] UNO link restored
+[BT] UNO busy during HOME; disabling automation
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+ disabled
+[ESP32] Camera buffers provisioned for base frame UXGA (13) (psram=yes)
+[ESP32] SHELF_MAP: K,W,Y; G,B,R; -,-,-
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline
+[TLM] UNO offline

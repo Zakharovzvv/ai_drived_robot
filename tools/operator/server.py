@@ -103,6 +103,8 @@ class OperatorService:
             else self._resolve_camera_stream_interval()
         )
         self._last_status: dict[str, Any] = {}
+        self._last_status_timestamp: Optional[float] = None
+        self._last_status_error: Optional[str] = None
         self._camera_resolution_options = [
             {"id": "QQVGA", "label": "QQVGA", "width": 160, "height": 120},
             {"id": "QVGA", "label": "QVGA", "width": 320, "height": 240},
@@ -187,13 +189,18 @@ class OperatorService:
 
         transport = self._determine_camera_transport()
         port = self._link.active_port or self._link.requested_port
+        status_fresh = self._status_is_recent()
         snapshot_url, source = self._resolve_camera_snapshot()
+        streaming_flag = (
+            bool((self._last_status or {}).get("cam_streaming")) if status_fresh else False
+        )
         return {
             "serial_port": port,
             "camera_snapshot_url": snapshot_url,
             "camera_snapshot_source": source,
             "camera_transport": transport,
-            "camera_streaming": bool((self._last_status or {}).get("cam_streaming")),
+            "camera_streaming": streaming_flag,
+            "status_fresh": status_fresh,
         }
 
     def camera_configured(self) -> bool:
@@ -212,6 +219,7 @@ class OperatorService:
 
         resolution = str(data.get("cam_resolution") or "").upper()
         quality = data.get("cam_quality")
+        max_resolution = str(data.get("cam_max") or "").upper()
         if not resolution:
             resolution = "UNKNOWN"
         try:
@@ -219,12 +227,23 @@ class OperatorService:
         except (TypeError, ValueError):
             quality_int = self._camera_quality_range[0]
 
-        running = bool((self._last_status or {}).get("cam_streaming"))
+        available_options = list(self._camera_resolution_options)
+        if max_resolution:
+            ordered_ids = [option["id"] for option in available_options]
+            try:
+                cutoff = ordered_ids.index(max_resolution)
+            except ValueError:
+                cutoff = None
+            if cutoff is not None:
+                available_options = available_options[: cutoff + 1]
+
+        running = bool((self._last_status or {}).get("cam_streaming")) if self._status_is_recent() else False
         return {
             "resolution": resolution,
             "quality": quality_int,
             "running": running,
-            "available_resolutions": self._camera_resolution_options,
+            "max_resolution": max_resolution or None,
+            "available_resolutions": available_options,
             "quality_min": self._camera_quality_range[0],
             "quality_max": self._camera_quality_range[1],
         }
@@ -243,13 +262,51 @@ class OperatorService:
         if not parts:
             return await self.camera_get_config()
 
+        stream_restart_required = False
+        if not self._camera_snapshot_override and self._status_is_recent():
+            stream_restart_required = bool((self._last_status or {}).get("cam_streaming"))
+
+        restart_succeeded = False
+
+        if stream_restart_required:
+            try:
+                await self.run_command("camstream off", raise_on_error=False)
+            except SerialNotFoundError:
+                logger.warning("CAMSTREAM OFF failed before CAMCFG; skipping restart")
+                stream_restart_required = False
+            except Exception:
+                logger.exception("Failed to stop camera stream before applying CAMCFG")
+                stream_restart_required = False
+
         command = f"CAMCFG {' '.join(parts)}"
         result = await self.run_command(command, raise_on_error=False)
         data = result.data or {}
         error = data.get("camcfg_error")
         if error:
             raise RuntimeError(str(error))
-        return await self.camera_get_config()
+
+        config = await self.camera_get_config()
+
+        if stream_restart_required:
+            try:
+                restart_result = await self.run_command("camstream on", raise_on_error=False)
+                response = (restart_result.data or {}).get("camstream")
+                if isinstance(response, str):
+                    restart_succeeded = response.strip().upper() == "ON"
+                elif isinstance(response, bool):
+                    restart_succeeded = response
+                else:
+                    restart_succeeded = True
+            except SerialNotFoundError:
+                logger.warning("CAMSTREAM ON failed after CAMCFG; camera remains offline")
+            except Exception:
+                logger.exception("Failed to restart camera stream after applying CAMCFG")
+
+        if stream_restart_required:
+            config = dict(config)
+            config["running"] = restart_succeeded
+
+        return config
 
     def _resolve_camera_snapshot(
         self,
@@ -260,7 +317,10 @@ class OperatorService:
         if self._camera_snapshot_override:
             return self._camera_snapshot_override, "override"
 
-        data = status or self._last_status or {}
+        effective = status
+        if status is None:
+            effective = self._effective_status_snapshot()
+        data = effective or {}
         ip = data.get("wifi_ip") or data.get("wifi_ip_addr")
         streaming = data.get("cam_streaming")
         streaming_flag = bool(streaming) if isinstance(streaming, bool) else str(streaming).lower() == "true"
@@ -284,6 +344,20 @@ class OperatorService:
         except ValueError:
             logger.warning("Invalid OPERATOR_CAMERA_STREAM_INTERVAL_MS='%s'", env_value)
             return default_seconds
+
+    def _status_is_recent(self, now: Optional[float] = None) -> bool:
+        if self._last_status_timestamp is None:
+            return False
+        now = now or time.time()
+        freshness_horizon = max(self._poll_interval * 2.5, 5.0)
+        return (now - self._last_status_timestamp) <= freshness_horizon
+
+    def _effective_status_snapshot(self) -> Optional[dict[str, Any]]:
+        if not self._status_is_recent():
+            return None
+        if not self._last_status:
+            return None
+        return dict(self._last_status)
 
     def _normalize_transport(self, value: Optional[str]) -> Optional[str]:
         if not value:
@@ -337,7 +411,7 @@ class OperatorService:
             "serial": {
                 "requested_port": self._link.requested_port,
                 "active_port": self._link.active_port,
-                "connected": self._link.active_port is not None,
+                "connected": False,
             },
             "camera": {
                 "configured": False,
@@ -364,40 +438,106 @@ class OperatorService:
         try:
             status_result = await self.run_command("status", raise_on_error=False)
         except SerialNotFoundError as exc:
+            self._last_status_error = str(exc)
             diag["serial"]["connected"] = False
             diag["serial"]["error"] = str(exc)
+            diag["meta"] = {
+                "status_fresh": False,
+                "status_error": str(exc),
+                "status_age_s": None,
+            }
             return diag
 
-        data = status_result.data
-        snapshot = dict(self._last_status)
-        if data:
-            snapshot.update(data)
-        if snapshot and ("cam_streaming" in snapshot or "wifi_connected" in snapshot):
-            self._last_status = snapshot
+        now = time.time()
+        data = status_result.data or {}
+        lines = status_result.raw or []
+        status_fresh = False
+
+        if lines and data:
+            merged = dict(self._last_status)
+            merged.update(data)
+            self._last_status = merged
+            self._last_status_timestamp = now
+            self._last_status_error = None
+            status_fresh = True
+        else:
+            status_fresh = self._status_is_recent(now)
+            if not status_fresh and not lines:
+                # No reply from STATUS means the controller is likely offline.
+                self._last_status_error = "no_data"
+
+        snapshot = dict(self._last_status) if status_fresh else {}
+
         diag["serial"]["active_port"] = self._link.active_port
-        diag["serial"]["connected"] = self._link.active_port is not None
-        diag["status"] = data
+        diag["serial"]["connected"] = bool(self._link.active_port and status_fresh)
+        diag["serial"]["stale"] = not status_fresh
+        diag["serial"]["status_age_s"] = (
+            None
+            if self._last_status_timestamp is None
+            else max(0.0, now - self._last_status_timestamp)
+        )
+        if self._last_status_error:
+            diag["serial"]["status_error"] = self._last_status_error
 
-        wifi_connected = data.get("wifi_connected") if data else self._last_status.get("wifi_connected")
-        if wifi_connected is not None:
-            diag["wifi"]["connected"] = bool(wifi_connected)
-        wifi_ip = data.get("wifi_ip") if data else self._last_status.get("wifi_ip")
-        if wifi_ip is not None:
-            diag["wifi"]["ip"] = wifi_ip
+        diag["status"] = snapshot if status_fresh else {}
 
-        status_error = data.get("status_error") or self._last_status.get("status_error")
+        wifi_connected_flag = snapshot.get("wifi_connected") if status_fresh else None
+        if wifi_connected_flag is not None:
+            diag["wifi"]["connected"] = bool(wifi_connected_flag)
+            wifi_ip = snapshot.get("wifi_ip") or snapshot.get("wifi_ip_addr")
+            if wifi_ip is not None:
+                diag["wifi"]["ip"] = wifi_ip
+        else:
+            diag["wifi"]["connected"] = False
+            diag["wifi"]["ip"] = None
+
+        status_error = snapshot.get("status_error") if status_fresh else None
         diag["uno"]["error"] = status_error
-        diag["uno"]["connected"] = status_error is None
-        diag["uno"]["state_id"] = data.get("state_id") if data else self._last_status.get("state_id")
-        diag["uno"]["err_flags"] = data.get("err_flags") if data else self._last_status.get("err_flags")
-        diag["uno"]["seq_ack"] = data.get("seq_ack") if data else self._last_status.get("seq_ack")
+        diag["uno"]["connected"] = bool(status_fresh and status_error is None)
+        diag["uno"]["state_id"] = snapshot.get("state_id") if status_fresh else None
+        diag["uno"]["err_flags"] = snapshot.get("err_flags") if status_fresh else None
+        diag["uno"]["seq_ack"] = snapshot.get("seq_ack") if status_fresh else None
 
-        snapshot_url, source = self._resolve_camera_snapshot(status=snapshot if snapshot else None)
+        snapshot_url, source = self._resolve_camera_snapshot(status=snapshot if status_fresh else None)
         diag["camera"]["configured"] = snapshot_url is not None
         diag["camera"]["snapshot_url"] = snapshot_url
-        cam_streaming = data.get("cam_streaming") if data else self._last_status.get("cam_streaming")
-        diag["camera"]["streaming"] = bool(cam_streaming)
+        diag["camera"]["streaming"] = bool(status_fresh and snapshot.get("cam_streaming"))
         diag["camera"]["source"] = source
+        # Expose current camera settings reported by STATUS (if fresh)
+        diag["camera"]["resolution"] = snapshot.get("cam_resolution") if status_fresh else None
+        diag["camera"]["quality"] = snapshot.get("cam_quality") if status_fresh else None
+        diag["camera"]["cam_max"] = snapshot.get("cam_max") if status_fresh else None
+        # Try to enrich diagnostics with the camera config fetched via CAMCFG
+        try:
+            camcfg = await self.camera_get_config()
+            if isinstance(camcfg, dict):
+                # camera_get_config returns resolution/quality/available_resolutions etc.
+                diag["camera"]["resolution"] = camcfg.get("resolution") or diag["camera"].get("resolution")
+                diag["camera"]["quality"] = camcfg.get("quality") if camcfg.get("quality") is not None else diag["camera"].get("quality")
+                # expose available_resolutions and max_resolution for UI
+                if camcfg.get("available_resolutions") is not None:
+                    diag["camera"]["available_resolutions"] = camcfg.get("available_resolutions")
+                if camcfg.get("max_resolution") is not None:
+                    diag["camera"]["max_resolution"] = camcfg.get("max_resolution")
+                # running state from camcfg is authoritative for configuration
+                if camcfg.get("running") is not None:
+                    diag["camera"]["streaming"] = bool(camcfg.get("running"))
+        except SerialNotFoundError:
+            # If serial is not available, leave camera fields as-is
+            pass
+        except Exception:
+            logger.exception("Failed to fetch camera config for diagnostics")
+
+        diag["meta"] = {
+            "status_fresh": status_fresh,
+            "status_age_s": (
+                None
+                if self._last_status_timestamp is None
+                else max(0.0, now - self._last_status_timestamp)
+            ),
+        }
+        if self._last_status_error:
+            diag["meta"]["status_error"] = self._last_status_error
 
         return diag
 
@@ -489,22 +629,28 @@ class OperatorService:
                 result = await self.run_command(
                     self._poll_command, raise_on_error=False
                 )
-                if result.data:
+                if result.raw and result.data:
                     merged = dict(self._last_status)
                     merged.update(result.data)
                     if "cam_streaming" in merged or "wifi_connected" in merged:
                         self._last_status = merged
+                    self._last_status_timestamp = time.time()
+                    self._last_status_error = None
+                elif not result.raw:
+                    self._last_status_error = "no_data"
                 payload = {
                     "command": self._poll_command,
                     "raw": result.raw,
                     "data": result.data,
                 }
             except SerialNotFoundError as exc:
+                self._last_status_error = str(exc)
                 payload = {
                     "command": self._poll_command,
                     "error": str(exc),
                 }
             except Exception as exc:  # pragma: no cover - unexpected
+                self._last_status_error = str(exc)
                 payload = {
                     "command": self._poll_command,
                     "error": f"unexpected error: {exc}",
@@ -677,6 +823,7 @@ class ServiceInfo(BaseModel):
     camera_snapshot_source: str
     camera_transport: str
     camera_streaming: bool
+    status_fresh: bool
 
 
 @app.get("/api/info", response_model=ServiceInfo)

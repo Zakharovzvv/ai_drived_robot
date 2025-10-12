@@ -54,6 +54,14 @@
 - [ ] Провести валидацию на реальном железе: стрим камеры, логирование, переключение Wi‑Fi (ожидает доступа).
 - [ ] Подготовить скриншоты и дополнение `docs/operator.md` про новые вкладки UI (после аппаратного теста).
 
+## Recent changes (2025-10-12)
+
+- Firmware: added X-Frame-Size header to camera snapshot responses and initial test-frame logging in `vision_color` to help validate real framebuffer dimensions. Camera init iterates candidate frame sizes and reports a `cam_max` value via CLI.
+- Backend: `/api/diagnostics` enriched with camera runtime fields: `resolution`, `quality`, `available_resolutions`, and `max_resolution`. Backend also queries CAMCFG to populate these fields when serial is available.
+- Frontend: Status card now displays camera `Resolution` and `Quality` in the Status tab; camera settings continue to populate from `available_resolutions` provided by backend.
+
+These changes close parts of the Firmware Camera HTTP Service and Operator Backend tasks and provide better observability for the camera configuration and served image size.
+
 ## Acceptance Criteria
 
 - ESP32 прошивка поднимает Wi‑Fi, запускает HTTP‑сервер камеры и публикует расширенные диагностические данные для CLI.
