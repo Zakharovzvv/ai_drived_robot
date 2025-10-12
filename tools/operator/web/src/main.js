@@ -1,4 +1,5 @@
 import Chart from "chart.js/auto";
+import { createEmptyShelfGrid, validateShelfGrid } from "./shelfMap.js";
 
 // ==================== Constants ====================
 const API_BASE = "";
@@ -17,6 +18,40 @@ const METRIC_CONFIG = [
   { key: "lineR_adc", label: "Line R", color: "#ed553b" },
   { key: "vbatt_mV", label: "Vbatt (mV)", color: "#173f5f" },
 ];
+
+const DEFAULT_SHELF_PALETTE = [
+  { id: "-", label: "Empty", color: "#0f172a" },
+  { id: "R", label: "Red", color: "#ef4444" },
+  { id: "G", label: "Green", color: "#22c55e" },
+  { id: "B", label: "Blue", color: "#3b82f6" },
+  { id: "Y", label: "Yellow", color: "#facc15" },
+  { id: "W", label: "White", color: "#f8fafc" },
+  { id: "K", label: "Black", color: "#111827" },
+];
+
+function contrastTextColor(hex) {
+  if (!hex || typeof hex !== "string") {
+    return "var(--color-text)";
+  }
+  const normalized = hex.replace("#", "");
+  if (normalized.length !== 6 && normalized.length !== 3) {
+    return "var(--color-text)";
+  }
+  const expanded = normalized.length === 3
+    ? normalized
+        .split("")
+        .map((char) => char + char)
+        .join("")
+    : normalized;
+  const r = Number.parseInt(expanded.slice(0, 2), 16);
+  const g = Number.parseInt(expanded.slice(2, 4), 16);
+  const b = Number.parseInt(expanded.slice(4, 6), 16);
+  if ([r, g, b].some((component) => Number.isNaN(component))) {
+    return "var(--color-text)";
+  }
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? "#0f172a" : "#f8fafc";
+}
 
 // ==================== DOM Elements ====================
 let statusGrid;
@@ -52,6 +87,12 @@ let settingsCameraStatus;
 let serviceCameraStreaming = null;
 let serviceCameraSource = "auto";
 let serviceCameraSnapshotUrl = null;
+let shelfMapForm;
+let shelfMapGrid;
+let shelfMapStatus;
+let shelfMapReloadButton;
+let shelfMapResetButton;
+let shelfMapPersistCheckbox;
 
 // Tabs
 let tabButtons;
@@ -77,6 +118,9 @@ let logStreamDesired = false;
 let cameraConfigState = null;
 let cameraSettingsBusy = false;
 let activeTabName = null;
+let shelfMapState = null;
+let shelfMapPalette = DEFAULT_SHELF_PALETTE.map((item) => ({ ...item }));
+let shelfMapBusy = false;
 
 // ==================== Chart Setup ====================
 function createChart(context) {
@@ -675,6 +719,292 @@ async function submitCameraSettings(event) {
   }
 }
 
+// ==================== Shelf Map Settings Helpers ====================
+function normalizeShelfPalette(palette) {
+  const candidates = Array.isArray(palette) && palette.length ? palette : DEFAULT_SHELF_PALETTE;
+  const deduped = [];
+  const seen = new Set();
+  candidates.forEach((entry) => {
+    if (!entry) return;
+    const id = (entry.id || entry.code || entry.value || "-").toString().trim().toUpperCase();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    const label = entry.label || id;
+    const colorSource = entry.color || (DEFAULT_SHELF_PALETTE.find((item) => item.id === id) || {}).color;
+    const color = typeof colorSource === "string" ? colorSource : "#0f172a";
+    deduped.push({ id, label, color });
+  });
+  if (!deduped.length) {
+    return DEFAULT_SHELF_PALETTE.map((item) => ({ ...item }));
+  }
+  return deduped;
+}
+
+function setShelfMapStatus(message, type = "info") {
+  if (!shelfMapStatus) return;
+  let className = "settings-status";
+  if (type === "success") className += " success";
+  else if (type === "error") className += " error";
+  shelfMapStatus.className = className;
+  shelfMapStatus.textContent = message || "";
+}
+
+function setShelfMapBusyState(isBusy, { label } = {}) {
+  shelfMapBusy = isBusy;
+  if (!shelfMapForm) return;
+
+  const submitButton = shelfMapForm.querySelector('button[type="submit"]');
+  if (submitButton) {
+    if (!submitButton.dataset.defaultLabel) {
+      submitButton.dataset.defaultLabel = submitButton.textContent || "Apply Changes";
+    }
+    submitButton.disabled = isBusy;
+    submitButton.textContent = isBusy
+      ? label || submitButton.dataset.defaultLabel
+      : submitButton.dataset.defaultLabel;
+  }
+
+  const selectControls = shelfMapGrid
+    ? Array.from(shelfMapGrid.querySelectorAll("select.shelf-map-select"))
+    : [];
+  selectControls.forEach((control) => {
+    control.disabled = isBusy;
+  });
+
+  if (shelfMapReloadButton) shelfMapReloadButton.disabled = isBusy;
+  if (shelfMapResetButton) shelfMapResetButton.disabled = isBusy;
+  if (shelfMapPersistCheckbox) shelfMapPersistCheckbox.disabled = isBusy;
+}
+
+function populateShelfMapOptions(select, palette) {
+  const desired = (select.value || "-").toString().trim().toUpperCase();
+  select.innerHTML = "";
+  palette.forEach((entry) => {
+    const option = document.createElement("option");
+    option.value = entry.id;
+    option.textContent = entry.label || entry.id;
+    option.dataset.color = entry.color;
+    select.appendChild(option);
+  });
+  if (desired) {
+    const hasDesired = palette.some((entry) => entry.id === desired);
+    select.value = hasDesired ? desired : palette[0]?.id || "-";
+  }
+}
+
+function updateShelfMapCellVisual(select, palette = shelfMapPalette) {
+  if (!select) return;
+  const code = (select.value || "-").toString().trim().toUpperCase();
+  const entry = (palette || []).find((item) => item.id === code);
+  const color = entry && entry.color ? entry.color : null;
+  if (color) {
+    select.style.setProperty("--cell-color", color);
+    select.style.setProperty("--cell-text-color", contrastTextColor(color));
+    select.dataset.color = color;
+  } else {
+    select.style.removeProperty("--cell-color");
+    select.style.removeProperty("--cell-text-color");
+    select.removeAttribute("data-color");
+  }
+  select.dataset.code = code;
+}
+
+function ensureShelfMapControls(palette) {
+  if (!shelfMapGrid) return [];
+  const selects = shelfMapGrid.querySelectorAll("select.shelf-map-select");
+  if (selects.length === 9) {
+    selects.forEach((select) => populateShelfMapOptions(select, palette));
+    return Array.from(selects);
+  }
+
+  shelfMapGrid.innerHTML = "";
+  const created = [];
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      const select = document.createElement("select");
+      select.className = "shelf-map-select";
+      select.dataset.row = String(row);
+      select.dataset.col = String(col);
+      select.setAttribute("aria-label", `Row ${row + 1}, Column ${col + 1}`);
+  populateShelfMapOptions(select, palette);
+  select.addEventListener("change", () => updateShelfMapCellVisual(select));
+      shelfMapGrid.appendChild(select);
+      created.push(select);
+    }
+  }
+  return created;
+}
+
+function renderShelfMapGrid(grid, palette) {
+  if (!shelfMapGrid) return;
+  const normalizedPalette = normalizeShelfPalette(palette || shelfMapPalette);
+  shelfMapPalette = normalizedPalette;
+  const allowed = normalizedPalette.map((entry) => entry.id);
+  let normalizedGrid;
+  try {
+    normalizedGrid = validateShelfGrid(grid, allowed);
+  } catch (error) {
+    normalizedGrid = createEmptyShelfGrid();
+  }
+  const selects = ensureShelfMapControls(normalizedPalette);
+  selects.forEach((select) => {
+    const row = Number.parseInt(select.dataset.row || "0", 10);
+    const col = Number.parseInt(select.dataset.col || "0", 10);
+    const value = normalizedGrid[row] && normalizedGrid[row][col] ? normalizedGrid[row][col] : "-";
+    select.value = value;
+    updateShelfMapCellVisual(select, normalizedPalette);
+  });
+}
+
+function collectShelfMapGrid() {
+  if (!shelfMapGrid) {
+    throw new Error("Shelf map controls unavailable");
+  }
+  const result = createEmptyShelfGrid();
+  const selects = shelfMapGrid.querySelectorAll("select.shelf-map-select");
+  selects.forEach((select) => {
+    const row = Number.parseInt(select.dataset.row || "0", 10);
+    const col = Number.parseInt(select.dataset.col || "0", 10);
+    if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || row > 2 || col < 0 || col > 2) {
+      return;
+    }
+    result[row][col] = (select.value || "-").toString().trim().toUpperCase();
+  });
+  const allowed = shelfMapPalette.map((entry) => entry.id);
+  return validateShelfGrid(result, allowed);
+}
+
+async function fetchShelfMap({ showLoading = false, silent = false } = {}) {
+  if (!shelfMapForm || shelfMapBusy) {
+    return shelfMapState;
+  }
+
+  if (showLoading) {
+    setShelfMapBusyState(true, { label: "Loading..." });
+    if (!silent) {
+      setShelfMapStatus("Loading shelf map…", "info");
+    }
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/api/shelf-map`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    const payload = await response.json();
+    shelfMapState = payload;
+    renderShelfMapGrid(payload.grid || createEmptyShelfGrid(), payload.palette);
+    if (!silent) {
+      setShelfMapStatus("Shelf map loaded", "success");
+      showToast("Shelf map loaded", "success");
+    }
+    return payload;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Failed to fetch shelf map:", error);
+    setShelfMapStatus(message || "Failed to load shelf map", "error");
+    if (!silent) {
+      showToast(`Failed to load shelf map: ${message}`, "error");
+    }
+    return null;
+  } finally {
+    if (showLoading) {
+      setShelfMapBusyState(false);
+    }
+  }
+}
+
+async function submitShelfMap(event) {
+  if (event) event.preventDefault();
+  if (!shelfMapForm || shelfMapBusy) return;
+
+  let grid;
+  try {
+    grid = collectShelfMapGrid();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setShelfMapStatus(message, "error");
+    showToast(message, "error");
+    return;
+  }
+
+  const persist = shelfMapPersistCheckbox ? Boolean(shelfMapPersistCheckbox.checked) : false;
+
+  setShelfMapBusyState(true, { label: "Applying..." });
+  setShelfMapStatus("Applying shelf map…", "info");
+
+  try {
+    const response = await fetch(`${API_BASE}/api/shelf-map`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grid, persist }),
+    });
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}));
+      const detail = errorPayload.detail || errorPayload.error || response.statusText;
+      throw new Error(detail || "Failed to update shelf map");
+    }
+    const payload = await response.json();
+    shelfMapState = payload;
+    renderShelfMapGrid(payload.grid || grid, payload.palette);
+    const message = persist ? "Shelf map saved to flash" : "Shelf map updated";
+    setShelfMapStatus(message, "success");
+    showToast(message, "success");
+    await Promise.allSettled([fetchDiagnostics(), fetchServiceInfo()]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Failed to update shelf map:", error);
+    setShelfMapStatus(message || "Failed to update shelf map", "error");
+    showToast(message || "Failed to update shelf map", "error");
+  } finally {
+    setShelfMapBusyState(false);
+  }
+}
+
+async function resetShelfMap(event) {
+  if (event) event.preventDefault();
+  if (!shelfMapForm || shelfMapBusy) return;
+
+  const confirmed = await showModal(
+    "Reset Shelf Map",
+    "Restore the default color layout on the robot? Current assignments will be lost."
+  );
+  if (!confirmed) return;
+
+  const persist = shelfMapPersistCheckbox ? Boolean(shelfMapPersistCheckbox.checked) : false;
+  setShelfMapBusyState(true, { label: "Resetting..." });
+  setShelfMapStatus("Resetting shelf map…", "info");
+
+  try {
+    const response = await fetch(`${API_BASE}/api/shelf-map/reset`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ persist }),
+    });
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}));
+      const detail = errorPayload.detail || errorPayload.error || response.statusText;
+      throw new Error(detail || "Failed to reset shelf map");
+    }
+    const payload = await response.json();
+    shelfMapState = payload;
+    renderShelfMapGrid(payload.grid || createEmptyShelfGrid(), payload.palette);
+    const message = persist
+      ? "Shelf map reset and saved to flash"
+      : "Shelf map reset to firmware defaults";
+    setShelfMapStatus(message, "success");
+    showToast(message, "success");
+    await Promise.allSettled([fetchDiagnostics(), fetchServiceInfo()]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Failed to reset shelf map:", error);
+    setShelfMapStatus(message || "Failed to reset shelf map", "error");
+    showToast(message || "Failed to reset shelf map", "error");
+  } finally {
+    setShelfMapBusyState(false);
+  }
+}
+
 // ==================== Rendering ====================
 function createStatusCard({ title, value, tone = "default", details = [] }) {
   const card = document.createElement("div");
@@ -1145,6 +1475,20 @@ function bindUiEvents() {
   if (settingsCameraQuality) {
     settingsCameraQuality.addEventListener("input", updateCameraQualityDisplayFromControl);
   }
+
+  if (shelfMapForm) {
+    shelfMapForm.addEventListener("submit", submitShelfMap);
+  }
+
+  if (shelfMapReloadButton) {
+    shelfMapReloadButton.addEventListener("click", () => {
+      fetchShelfMap({ showLoading: true });
+    });
+  }
+
+  if (shelfMapResetButton) {
+    shelfMapResetButton.addEventListener("click", resetShelfMap);
+  }
 }
 
 // ==================== Tabs Management ====================
@@ -1187,6 +1531,7 @@ function switchTab(tabName) {
 
   if (tabName === "settings") {
     fetchCameraConfig({ showLoading: cameraConfigState === null, silent: cameraConfigState !== null });
+    fetchShelfMap({ showLoading: shelfMapState === null, silent: shelfMapState !== null });
   }
 }
 
@@ -1381,6 +1726,12 @@ function captureDomReferences() {
   settingsCameraQualityValue = document.getElementById("camera-settings-quality-value");
   settingsCameraRefresh = document.getElementById("camera-settings-refresh");
   settingsCameraStatus = document.getElementById("camera-settings-status");
+  shelfMapForm = document.getElementById("shelf-map-form");
+  shelfMapGrid = document.getElementById("shelf-map-grid");
+  shelfMapStatus = document.getElementById("shelf-map-status");
+  shelfMapReloadButton = document.getElementById("shelf-map-reload");
+  shelfMapResetButton = document.getElementById("shelf-map-reset");
+  shelfMapPersistCheckbox = document.getElementById("shelf-map-persist");
   tabButtons = document.querySelectorAll(".tab-button");
   tabContents = document.querySelectorAll(".tab-content");
 

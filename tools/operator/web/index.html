@@ -198,6 +198,31 @@
             </form>
           </article>
 
+          <article class="settings-card" data-device="shelf-map">
+            <header>
+              <h3>Shelf Map</h3>
+              <p>Assign colors to the 3×3 storage grid used by the picker.</p>
+            </header>
+            <form id="shelf-map-form" class="settings-form">
+              <div class="settings-field">
+                <label for="shelf-map-grid">Slots</label>
+                <div id="shelf-map-grid" class="shelf-map-grid" role="grid" aria-label="Shelf map grid"></div>
+              </div>
+              <div class="settings-field checkbox-field">
+                <label class="checkbox-inline">
+                  <input type="checkbox" id="shelf-map-persist" name="persist" />
+                  <span>Save to flash (NVS) after applying</span>
+                </label>
+              </div>
+              <div class="settings-actions">
+                <button id="shelf-map-reload" type="button" class="btn-secondary btn-sm">Reload</button>
+                <button id="shelf-map-reset" type="button" class="btn-danger btn-sm">Reset to Default</button>
+                <button type="submit" class="btn-primary btn-sm">Apply Changes</button>
+              </div>
+              <p id="shelf-map-status" class="settings-status" role="status" aria-live="polite"></p>
+            </form>
+          </article>
+
           <article class="settings-card" data-device="esp32">
             <header>
               <h3>ESP32 Controller</h3>

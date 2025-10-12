@@ -39,7 +39,7 @@ rbm-operator brake
 
 # Управление картой склада
 rbm-operator smap get
-rbm-operator smap set "ROW=0 COL=2 COLOR=R"
+rbm-operator smap set "R,G,B; Y,W,K; -,-,-"
 rbm-operator smap save
 ```
 
@@ -73,6 +73,7 @@ rbm-operator smap save
    - карточки статуса с ключевыми метриками `STATUS`;
    - live-график (лифт, захват, датчики линии, напряжение батареи);
    - кнопки управления (Start, BRAKE, произвольные команды).
+   - вкладку Settings с редактором Shelf Map для конфигурации 3×3 матрицы цветов прямо с UI.
 
 ## 5. Автоматический запуск и остановка
 

@@ -42,6 +42,13 @@
 
 - The backend forwards the camera snapshot URL and stream state discovered via STATUS; the UI reads diagnostics to populate the Camera card. If the browser cache serves an older JS bundle you may need to hard-reload the page to see the updated card text.
 
+### Operator / Shelf Map (2025-10-12)
+
+- Added Shelf Map support: REST endpoint `/api/shelf-map` with live `GET`/`PUT`/`RESET` operations and a frontend grid editor allowing the operator to view and set the 3x3 colour matrix. (RU: Добавлена поддержка Shelf Map — REST `/api/shelf-map` и UI для редактирования 3x3 матрицы цветов.)
+- Fixed backend parsing robustness: SMAP replies can be interleaved with telemetry (e.g. `[TLM]` lines); the server now ignores unrelated key=value fragments and non-grid lines to avoid ValueError/500 responses. (RU: Исправлена устойчивость парсинга SMAP — сервер игнорирует служебные/телеметрийные строки.)
+- Operational: reflashed ESP32 firmware and restarted the operator stack to validate SMAP behaviour; verified responses via CLI (`smap get --raw`) and HTTP (`GET /api/shelf-map`). (RU: Перепрошивка ESP32 и перезапуск стека оператора — проверено через CLI и HTTP.)
+
+
 ### Operator Backend & Tooling
 
 - `tools/operator/server.py` расширен REST/WS-эндпоинтами: `/api/camera/config`, `/api/camera/snapshot`, `/api/diagnostics`, `/api/logs`, `/ws/camera`, `/ws/logs`; добавлены опросы статуса камеры, диагностика Wi-Fi и рассылка логов.

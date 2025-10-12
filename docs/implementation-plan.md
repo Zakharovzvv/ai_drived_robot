@@ -54,6 +54,13 @@
 - [ ] Провести валидацию на реальном железе: стрим камеры, логирование, переключение Wi‑Fi (ожидает доступа).
 - [ ] Подготовить скриншоты и дополнение `docs/operator.md` про новые вкладки UI (после аппаратного теста).
 
+### 8. Shelf Map Configuration UI
+
+- [x] Добавить в backend FastAPI эндпоинты для чтения/изменения `ShelfMap` через команды `SMAP` ESP32.
+- [x] Расширить сервис ESP32Link/OperatorService обработкой ответов `SMAP` и кешированием текущей карты.
+- [x] Реализовать UI во вкладке Settings: визуальный редактор 3×3 с выбором цветов и кнопкой сохранения/сброса.
+- [x] Добавить тесты Python/JS (unit и e2e mock) на парсинг/валидацию матрицы и вызовы REST API.
+
 ## Recent changes (2025-10-12)
 
 - Firmware: added X-Frame-Size header to camera snapshot responses and initial test-frame logging in `vision_color` to help validate real framebuffer dimensions. Camera init iterates candidate frame sizes and reports a `cam_max` value via CLI.

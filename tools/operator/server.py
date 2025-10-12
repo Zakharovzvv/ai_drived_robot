@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from fastapi import (  # type: ignore
     Depends,
@@ -51,6 +51,30 @@ class CameraConfigResponse(BaseModel):
 class CameraConfigUpdate(BaseModel):
     resolution: Optional[str] = None
     quality: Optional[int] = None
+
+
+class ShelfMapPaletteEntry(BaseModel):
+    id: str
+    label: str
+    color: str
+
+
+class ShelfMapResponse(BaseModel):
+    grid: List[List[str]]
+    palette: List[ShelfMapPaletteEntry]
+    raw: str
+    timestamp: float
+    source: str
+    persisted: Optional[bool] = None
+
+
+class ShelfMapUpdateRequest(BaseModel):
+    grid: List[List[str]]
+    persist: bool = False
+
+
+class ShelfMapResetRequest(BaseModel):
+    persist: bool = False
 
 
 class CameraNotConfiguredError(RuntimeError):
@@ -115,6 +139,19 @@ class OperatorService:
             {"id": "UXGA", "label": "UXGA", "width": 1600, "height": 1200},
         ]
         self._camera_quality_range = (10, 63)
+        self._shelf_palette = [
+            {"id": "-", "label": "Empty", "color": "#0f172a"},
+            {"id": "R", "label": "Red", "color": "#ef4444"},
+            {"id": "G", "label": "Green", "color": "#22c55e"},
+            {"id": "B", "label": "Blue", "color": "#3b82f6"},
+            {"id": "Y", "label": "Yellow", "color": "#facc15"},
+            {"id": "W", "label": "White", "color": "#f8fafc"},
+            {"id": "K", "label": "Black", "color": "#111827"},
+        ]
+        self._shelf_allowed_codes: Set[str] = {entry["id"] for entry in self._shelf_palette}
+        self._shelf_cache: Optional[Dict[str, Any]] = None
+        self._shelf_cache_timestamp: Optional[float] = None
+        self._shelf_cache_ttl = 1.0
 
     async def start(self) -> None:
         if self._poll_task and not self._poll_task.done():
@@ -307,6 +344,161 @@ class OperatorService:
             config["running"] = restart_succeeded
 
         return config
+
+    def _shelf_palette_copy(self) -> List[dict[str, str]]:
+        return [dict(entry) for entry in self._shelf_palette]
+
+    def _shelf_clone_grid(self, grid: Sequence[Sequence[str]]) -> List[List[str]]:
+        return [list(row) for row in grid]
+
+    def _normalize_shelf_code(self, value: object) -> str:
+        if value is None:
+            return "-"
+        code = str(value).strip().upper()
+        if code in {"", "-", "NONE", "N", "EMPTY"}:
+            code = "-"
+        if code not in self._shelf_allowed_codes:
+            raise ValueError(f"Unsupported shelf color code: {value}")
+        return code
+
+    def _normalize_shelf_grid(self, grid: Sequence[Sequence[str]]) -> List[List[str]]:
+        if len(grid) != 3:
+            raise ValueError("Shelf map must have exactly 3 rows")
+        normalized: List[List[str]] = []
+        for row in grid:
+            if len(row) != 3:
+                raise ValueError("Shelf map rows must have exactly 3 columns")
+            normalized.append([self._normalize_shelf_code(cell) for cell in row])
+        return normalized
+
+    def _serialize_shelf_grid(self, grid: Sequence[Sequence[str]]) -> str:
+        rows: List[str] = []
+        for row in grid:
+            rows.append(",".join(cell for cell in row))
+        return "; ".join(rows)
+
+    def _extract_shelf_payload_line(self, lines: Sequence[str]) -> str:
+        for line in reversed(list(lines)):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            upper = stripped.upper()
+            if upper.startswith("SMAP="):
+                raise RuntimeError(stripped)
+            if "=" in stripped:
+                # skip unrelated key=value telemetry fragments
+                continue
+            if ";" not in stripped and "," not in stripped:
+                continue
+            try:
+                self._parse_shelf_payload(stripped)
+            except ValueError:
+                continue
+            return stripped
+        raise RuntimeError("SMAP command returned no data")
+
+    def _parse_shelf_payload(self, payload: str) -> List[List[str]]:
+        rows_raw = [segment.strip() for segment in payload.split(";")]
+        rows: List[List[str]] = []
+        for raw in rows_raw:
+            if not raw:
+                continue
+            cells = [self._normalize_shelf_code(token) for token in raw.split(",")]
+            while len(cells) < 3:
+                cells.append("-")
+            rows.append(cells[:3])
+            if len(rows) == 3:
+                break
+        while len(rows) < 3:
+            rows.append(["-", "-", "-"])
+        return rows[:3]
+
+    def _shelf_command_succeeded(self, lines: Sequence[str], expected: str) -> bool:
+        expected_upper = expected.upper()
+        for line in lines or []:
+            if line.strip().upper() == expected_upper:
+                return True
+        return False
+
+    async def shelf_get_map(self, *, force_refresh: bool = False) -> dict[str, Any]:
+        now = time.time()
+        if (
+            not force_refresh
+            and self._shelf_cache
+            and self._shelf_cache_timestamp is not None
+            and (now - self._shelf_cache_timestamp) <= self._shelf_cache_ttl
+        ):
+            cached_grid = self._shelf_clone_grid(self._shelf_cache["grid"])
+            return {
+                "grid": cached_grid,
+                "palette": self._shelf_palette_copy(),
+                "raw": self._shelf_cache["raw"],
+                "timestamp": self._shelf_cache_timestamp,
+                "source": "cache",
+                "persisted": self._shelf_cache.get("persisted"),
+            }
+
+        result = await self.run_command("SMAP GET", raise_on_error=False)
+        payload = self._extract_shelf_payload_line(result.raw or [])
+        grid = self._parse_shelf_payload(payload)
+        timestamp = time.time()
+        self._shelf_cache = {
+            "grid": self._shelf_clone_grid(grid),
+            "raw": payload,
+            "persisted": None,
+        }
+        self._shelf_cache_timestamp = timestamp
+        return {
+            "grid": grid,
+            "palette": self._shelf_palette_copy(),
+            "raw": payload,
+            "timestamp": timestamp,
+            "source": "live",
+            "persisted": None,
+        }
+
+    async def shelf_set_map(
+        self,
+        grid: Sequence[Sequence[str]],
+        *,
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        normalized = self._normalize_shelf_grid(grid)
+        payload = self._serialize_shelf_grid(normalized)
+        result = await self.run_command(f"SMAP SET {payload}", raise_on_error=False)
+        if not self._shelf_command_succeeded(result.raw or [], "OK"):
+            raise RuntimeError("SMAP SET failed")
+
+        persisted = False
+        if persist:
+            save_result = await self.run_command("SMAP SAVE", raise_on_error=False)
+            if not self._shelf_command_succeeded(save_result.raw or [], "SAVED"):
+                raise RuntimeError("SMAP SAVE failed")
+            persisted = True
+
+        response = await self.shelf_get_map(force_refresh=True)
+        response["persisted"] = persisted
+        if self._shelf_cache:
+            self._shelf_cache["persisted"] = persisted if persisted else None
+        return response
+
+    async def shelf_reset_map(self, *, persist: bool = False) -> dict[str, Any]:
+        result = await self.run_command("SMAP CLEAR", raise_on_error=False)
+        if not self._shelf_command_succeeded(result.raw or [], "RESET"):
+            raise RuntimeError("SMAP CLEAR failed")
+
+        persisted = False
+        if persist:
+            save_result = await self.run_command("SMAP SAVE", raise_on_error=False)
+            if not self._shelf_command_succeeded(save_result.raw or [], "SAVED"):
+                raise RuntimeError("SMAP SAVE failed")
+            persisted = True
+
+        response = await self.shelf_get_map(force_refresh=True)
+        response["persisted"] = persisted
+        if self._shelf_cache:
+            self._shelf_cache["persisted"] = persisted if persisted else None
+        return response
 
     def _resolve_camera_snapshot(
         self,
@@ -815,6 +1007,47 @@ async def api_camera_config_update(
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return CameraConfigResponse(**config)
+
+
+@app.get("/api/shelf-map", response_model=ShelfMapResponse)
+async def api_shelf_map(svc: OperatorService = Depends(get_service)) -> ShelfMapResponse:
+    try:
+        payload = await svc.shelf_get_map()
+    except SerialNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ShelfMapResponse(**payload)
+
+
+@app.put("/api/shelf-map", response_model=ShelfMapResponse)
+async def api_shelf_map_update(
+    request: ShelfMapUpdateRequest,
+    svc: OperatorService = Depends(get_service),
+) -> ShelfMapResponse:
+    try:
+        payload = await svc.shelf_set_map(request.grid, persist=request.persist)
+    except SerialNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ShelfMapResponse(**payload)
+
+
+@app.post("/api/shelf-map/reset", response_model=ShelfMapResponse)
+async def api_shelf_map_reset(
+    request: ShelfMapResetRequest,
+    svc: OperatorService = Depends(get_service),
+) -> ShelfMapResponse:
+    try:
+        payload = await svc.shelf_reset_map(persist=request.persist)
+    except SerialNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ShelfMapResponse(**payload)
 
 
 class ServiceInfo(BaseModel):
