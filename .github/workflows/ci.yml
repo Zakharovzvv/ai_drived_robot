@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/operator/pyproject.toml
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e backend/operator[dev]
+      - name: Run backend tests
+        working-directory: backend/operator
+        env:
+          PYTHONPATH: "${{ github.workspace }}"
+        run: |
+          python3 -m pytest -q
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/web/pnpm-lock.yaml
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install and run frontend tests
+        working-directory: frontend/web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test -- --run
