@@ -47,6 +47,9 @@ void setup(){
   g_last_uno_check_ms = millis();
   // Camera
   if(!cam_init()) log_line("[ESP32] Camera init FAILED");
+  framesize_t detectedMax = camera_http_detect_supported_max_resolution();
+  logf("[ESP32] Camera max resolution detected: %s",
+    camera_http_resolution_name(detectedMax));
   camera_http_sync_sensor();
   // Shelf map
   if(!gShelf.loadNVS()){ gShelf.setDefault(); gShelf.saveNVS(); }

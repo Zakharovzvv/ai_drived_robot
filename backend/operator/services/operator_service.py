@@ -19,6 +19,7 @@ from fastapi import WebSocket
 from ..esp32_link import CommandResult, ESP32Link, SerialNotFoundError
 from ..esp32_ws_link import ESP32WSLink
 from ..log_parser import structure_logs
+from .wifi_registry import clear_last_endpoint, load_last_endpoint, save_last_endpoint
 
 logger = logging.getLogger("operator.service")
 
@@ -133,6 +134,16 @@ class OperatorService:
             if self._configure_wifi_transport(ws_clean, timeout_override):
                 logger.info("Wi-Fi transport enabled with static endpoint %s", ws_clean)
         else:
+            cached_endpoint = load_last_endpoint()
+            if cached_endpoint:
+                logger.info("Restoring Wi-Fi transport from cached endpoint %s", cached_endpoint)
+                if not self._configure_wifi_transport(cached_endpoint, timeout_override):
+                    logger.warning(
+                        "Cached Wi-Fi endpoint %s is not reachable; will wait for auto-discovery",
+                        cached_endpoint,
+                    )
+                    clear_last_endpoint()
+                    cached_endpoint = None
             self._ws_auto_enabled = True
             if desired_mode == TRANSPORT_WIFI:
                 logger.info(
@@ -310,6 +321,8 @@ class OperatorService:
 
             if not self._configure_wifi_transport(endpoint, self._serial_timeout):
                 return
+
+            save_last_endpoint(endpoint)
 
             if self._control_mode in {TRANSPORT_WIFI, TRANSPORT_AUTO}:
                 if self._control_mode == TRANSPORT_WIFI or self._active_transport != TRANSPORT_WIFI:
@@ -593,15 +606,20 @@ class OperatorService:
         except (TypeError, ValueError):
             quality_int = self._camera_quality_range[0]
 
-        available_options = list(self._camera_resolution_options)
+        available_options: List[Dict[str, Any]] = []
+        cutoff = None
         if max_resolution:
-            ordered_ids = [option["id"] for option in available_options]
+            ordered_ids = [option["id"] for option in self._camera_resolution_options]
             try:
                 cutoff = ordered_ids.index(max_resolution)
             except ValueError:
                 cutoff = None
+
+        for idx, template in enumerate(self._camera_resolution_options):
+            option = dict(template)
             if cutoff is not None:
-                available_options = available_options[: cutoff + 1]
+                option["supported"] = idx <= cutoff
+            available_options.append(option)
 
         running = bool((self._last_status or {}).get("cam_streaming")) if self._status_is_recent() else False
         return {
@@ -649,7 +667,29 @@ class OperatorService:
         data = result.data or {}
         error = data.get("camcfg_error")
         if error:
-            raise RuntimeError(str(error))
+            error_text = str(error).strip()
+            requested_resolution = resolution.upper() if resolution else None
+            max_supported: Optional[str] = None
+            try:
+                snapshot = await self.camera_get_config()
+                max_supported = snapshot.get("max_resolution")
+            except SerialNotFoundError:
+                pass
+            except Exception:  # pragma: no cover - defensive logging
+                logger.debug("Failed to refresh camera config after CAMCFG error", exc_info=True)
+
+            message_parts: List[str] = []
+            if requested_resolution:
+                base = f"Camera rejected resolution {requested_resolution}"
+                if max_supported:
+                    base = f"{base}; max supported {max_supported}"
+                message_parts.append(base)
+            if error_text and error_text.upper() != "RESOLUTION":
+                message_parts.append(error_text)
+            if not message_parts:
+                message_parts.append(error_text or "Camera configuration rejected")
+
+            raise RuntimeError(". ".join(message_parts))
 
         config = await self.camera_get_config()
 

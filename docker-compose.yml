@@ -7,9 +7,14 @@ services:
       dockerfile: docker/backend.Dockerfile
     env_file:
       - .env
+    environment:
+      OPERATOR_WIFI_CACHE_PATH: /app/state/last_wifi_endpoint.json
+      OPERATOR_WS_ENDPOINT: ${OPERATOR_WS_ENDPOINT:-}
     ports:
       - "8000:8000"
     restart: unless-stopped
+    volumes:
+      - ./.state/backend:/app/state
 
   frontend:
     build:

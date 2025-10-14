@@ -40,17 +40,6 @@ class StubLink:
         self.active_port = None
 
 
-@pytest.fixture(autouse=True)
-def clear_transport_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in (
-        "OPERATOR_CONTROL_TRANSPORT",
-        "OPERATOR_WS_ENDPOINT",
-        "OPERATOR_SERIAL_PORT",
-        "OPERATOR_TRANSPORT_RETRY_COOLDOWN",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-
 @pytest.mark.asyncio
 async def test_run_command_falls_back_to_serial(monkeypatch: pytest.MonkeyPatch) -> None:
     wifi_link = StubLink([SerialNotFoundError("wifi down")], endpoint="ws://stub")

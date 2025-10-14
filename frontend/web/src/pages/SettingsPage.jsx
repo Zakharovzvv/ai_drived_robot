@@ -217,6 +217,7 @@ function CameraSettings() {
       return {
         value,
         label: dimensions ? `${label} (${dimensions})` : label,
+        unsupported: item.supported === false,
       };
     });
   }, [cameraConfig]);
@@ -263,8 +264,14 @@ function CameraSettings() {
             aria-label="Camera resolution"
           >
             {options.map((option) => (
-              <option key={option.value} value={option.value}>
+              <option
+                key={option.value}
+                value={option.value}
+                data-unsupported={option.unsupported ? "true" : "false"}
+                title={option.unsupported ? "Robot currently reports this level as unsupported" : undefined}
+              >
                 {option.label}
+                {option.unsupported ? " • unsupported" : ""}
               </option>
             ))}
             {cameraConfig &&
@@ -273,8 +280,11 @@ function CameraSettings() {
                 <option value={resolution}>{`${resolution} (current)`}</option>
               )}
           </select>
-        </div>
-        <div className="settings-field">
+          {cameraConfig?.max_resolution ? (
+            <p className="settings-hint" role="note">
+              Firmware reports maximum supported resolution: {cameraConfig.max_resolution}
+            </p>
+          ) : null}
           <label htmlFor="camera-settings-quality">
             JPEG Quality <span>{Number.isFinite(Number(quality)) ? quality : "—"}</span>
           </label>

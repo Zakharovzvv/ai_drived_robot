@@ -20,16 +20,18 @@ constexpr uint8_t kMaxJpegQuality = 63;
 struct ResolutionEntry {
   framesize_t value;
   const char* name;
+  uint16_t width;
+  uint16_t height;
 };
 
 const ResolutionEntry kResolutionTable[] = {
-  {FRAMESIZE_QQVGA, "QQVGA"},   // 160x120
-  {FRAMESIZE_QVGA, "QVGA"},     // 320x240
-  {FRAMESIZE_VGA, "VGA"},       // 640x480
-  {FRAMESIZE_SVGA, "SVGA"},     // 800x600
-  {FRAMESIZE_XGA, "XGA"},       // 1024x768
-  {FRAMESIZE_SXGA, "SXGA"},     // 1280x1024
-  {FRAMESIZE_UXGA, "UXGA"},     // 1600x1200
+  {FRAMESIZE_QQVGA, "QQVGA", 160, 120},   // 160x120
+  {FRAMESIZE_QVGA, "QVGA", 320, 240},     // 320x240
+  {FRAMESIZE_VGA, "VGA", 640, 480},       // 640x480
+  {FRAMESIZE_SVGA, "SVGA", 800, 600},     // 800x600
+  {FRAMESIZE_XGA, "XGA", 1024, 768},      // 1024x768
+  {FRAMESIZE_SXGA, "SXGA", 1280, 1024},   // 1280x1024
+  {FRAMESIZE_UXGA, "UXGA", 1600, 1200},   // 1600x1200
 };
 
 CameraHttpConfig s_config{ kDefaultFrameSize, kDefaultJpegQuality };
@@ -269,4 +271,81 @@ void camera_http_set_supported_max_resolution(framesize_t frame_size) {
 
 framesize_t camera_http_get_supported_max_resolution() {
   return kResolutionTable[s_max_resolution_index].value;
+}
+
+framesize_t camera_http_detect_supported_max_resolution() {
+  sensor_t* sensor = esp_camera_sensor_get();
+  if (!sensor) {
+    log_line("[CameraHTTP] Sensor handle missing while probing resolutions");
+    return camera_http_get_supported_max_resolution();
+  }
+
+  framesize_t original_size = s_config.frame_size;
+  framesize_t detected = kResolutionTable[0].value;
+  const ResolutionEntry* detected_entry = &kResolutionTable[0];
+
+  for (int idx = static_cast<int>(resolution_count()) - 1; idx >= 0; --idx) {
+    const auto& candidate = kResolutionTable[idx];
+    if (sensor->set_framesize(sensor, candidate.value) != 0) {
+      logf("[CameraHTTP] Probe reject %s: set_framesize failed", candidate.name);
+      continue;
+    }
+
+    bool valid = false;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+      camera_fb_t* fb = esp_camera_fb_get();
+      if (!fb) {
+        logf("[CameraHTTP] Probe %s attempt %d: fb_get failed", candidate.name, attempt + 1);
+        continue;
+      }
+
+      bool dims_ok = (fb->width == candidate.width && fb->height == candidate.height);
+      bool len_ok = (fb->len > 0);
+      bool jpeg_ok = false;
+
+      if (fb->format == PIXFORMAT_JPEG) {
+        jpeg_ok = true;
+      } else {
+        uint8_t* jpg = nullptr;
+        size_t jpg_len = 0;
+        if (frame2jpg(fb, kMinJpegQuality, &jpg, &jpg_len)) {
+          jpeg_ok = (jpg_len > 0);
+        }
+        if (jpg && jpg != fb->buf) {
+          free(jpg);
+        }
+      }
+
+      esp_camera_fb_return(fb);
+
+      if (dims_ok && len_ok && jpeg_ok) {
+        valid = true;
+        break;
+      }
+
+    }
+
+    if (valid) {
+      detected = candidate.value;
+      detected_entry = &candidate;
+      logf("[CameraHTTP] Probe accepted %s (%u x %u)",
+           candidate.name,
+           static_cast<unsigned>(candidate.width),
+           static_cast<unsigned>(candidate.height));
+      break;
+    }
+
+    logf("[CameraHTTP] Probe reject %s: validation failed", candidate.name);
+  }
+
+  if (sensor->set_framesize(sensor, original_size) != 0) {
+    log_line("[CameraHTTP] Failed to restore frame size after probe");
+  }
+
+  camera_http_set_supported_max_resolution(detected);
+  s_config.frame_size = original_size;
+  logf("[CameraHTTP] Max resolution set to %s",
+       detected_entry->name);
+  camera_http_sync_sensor();
+  return detected;
 }

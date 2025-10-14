@@ -24,6 +24,7 @@ class CameraConfigResponse(BaseModel):
     available_resolutions: List[dict[str, Any]]
     quality_min: int
     quality_max: int
+    max_resolution: Optional[str] = None
 
 
 class CameraConfigUpdate(BaseModel):

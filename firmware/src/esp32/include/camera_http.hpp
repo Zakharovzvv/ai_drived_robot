@@ -41,3 +41,6 @@ const char* camera_http_resolution_name(framesize_t frame_size);
 // Sets/returns the maximum framesize supported by the hardware buffers.
 void camera_http_set_supported_max_resolution(framesize_t frame_size);
 framesize_t camera_http_get_supported_max_resolution();
+
+// Probes the sensor for the highest usable resolution and updates the limit.
+framesize_t camera_http_detect_supported_max_resolution();

@@ -77,6 +77,7 @@
 ### 14. Dual Control Transport Selection (2025-10-13)
 
 - [~] Backend: внедрить режим `auto` с приоритетом Wi-Fi и резервным переходом на UART, собирающий состояние доступных транспортов и сохраняя оба соединения конфигурированными. — реализован приоритет Wi-Fi с fallback внутри `OperatorService`, предстоит дополнительно отладить сценарии без железа и покрыть тестами.
+- [x] Backend: кэшировать последний успешный Wi-Fi endpoint и восстанавливать его при старте, устраняя зависимость от переменной `OPERATOR_WS_ENDPOINT`.
 - [x] Backend API: расширить `/api/info` и добавить эндпоинт переключения транспорта, чтобы фронтенд мог запрашивать и задавать активный канал. — добавлены `/api/control/transport` (GET/POST) и выдача метаданных транспорта.
 - [x] Tests: покрыть автоматический выбор и переключение транспорта юнит-тестами `OperatorService`, включая мок Wi-Fi и UART статусы. — добавлен `test_transport_control.py`, проверяющий fallback, смену режимов и обработку ошибок конфигурации.
 - [x] Frontend Header: добавить элемент управления выбором транспорта (Wi-Fi/UART/Auto) и отображение статуса каждого канала. — реализован селектор в `Header.jsx` с бейджами состояния транспорта.
@@ -136,6 +137,7 @@
 - Backend: `/api/diagnostics` enriched with camera runtime fields: `resolution`, `quality`, `available_resolutions`, and `max_resolution`. Backend also queries CAMCFG to populate these fields when serial is available.
 - Frontend: Status card now displays camera `Resolution` and `Quality` in the Status tab; camera settings continue to populate from `available_resolutions` provided by backend.
 - Frontend: Reworked toast system to auto-dismiss after 5 seconds with strict pruning so notifications never pile up on screen.
+- Firmware: probing routine now validates each candidate frame (dimensions + JPEG conversion) before advertising `cam_max`, preventing corrupted frames from being marked supported.
 
 These changes close parts of the Firmware Camera HTTP Service and Operator Backend tasks and provide better observability for the camera configuration and served image size.
 

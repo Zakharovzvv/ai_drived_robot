@@ -171,6 +171,12 @@ function normalizeCameraConfig(raw) {
     available_resolutions: Array.isArray(raw.available_resolutions) ? raw.available_resolutions : [],
     quality_min: Number.isNaN(parsedQualityMin) ? 10 : parsedQualityMin,
     quality_max: Number.isNaN(parsedQualityMax) ? 63 : parsedQualityMax,
+    max_resolution:
+      typeof raw.max_resolution === "string" && raw.max_resolution.trim()
+        ? raw.max_resolution.trim().toUpperCase()
+        : typeof raw.maxResolution === "string" && raw.maxResolution.trim()
+        ? raw.maxResolution.trim().toUpperCase()
+        : null,
   };
   return normalized;
 }
@@ -179,7 +185,8 @@ function buildCameraStatusMessage(config) {
   if (!config) return "";
   const streamLabel = config.running ? "Streaming" : "Idle";
   const qualityLabel = config.quality != null ? config.quality : "—";
-  return `Current: ${config.resolution} • Quality ${qualityLabel} • ${streamLabel}`;
+  const maxLabel = config.max_resolution ? ` • Max ${config.max_resolution}` : "";
+  return `Current: ${config.resolution} • Quality ${qualityLabel} • ${streamLabel}${maxLabel}`;
 }
 
 function normalizePalette(palette) {
