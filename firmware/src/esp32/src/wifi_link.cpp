@@ -3,10 +3,15 @@
 #include "log_sink.hpp"
 #include <Arduino.h>
 #include <WiFi.h>
+extern "C" {
+#include <esp_wifi.h>
+}
 
 namespace {
 constexpr uint32_t kReconnectIntervalMs = 5000;
 constexpr uint32_t kStatusLogThrottleMs = 2000;
+
+constexpr wifi_country_t kCountryRU = {"RU", 1, 13, WIFI_COUNTRY_POLICY_MANUAL};
 
 uint32_t g_lastAttemptMs = 0;
 uint32_t g_lastStatusLogMs = 0;
@@ -31,7 +36,11 @@ void log_status_change(wl_status_t status){
 
   switch(status){
   case WL_CONNECTED:
-    logf("[WiFi] Connected, IP=%s", WiFi.localIP().toString().c_str());
+    logf(
+        "[WiFi] Connected, IP=%s, RSSI=%d dBm, channel=%d",
+        WiFi.localIP().toString().c_str(),
+        WiFi.RSSI(),
+        WiFi.channel());
     break;
   case WL_DISCONNECTED:
     log_line("[WiFi] Disconnected");
@@ -59,9 +68,14 @@ void wifi_init(){
   }
 
   WiFi.mode(WIFI_STA);
-  WiFi.persistent(false);
+  WiFi.persistent(true);
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);
+  esp_wifi_set_country(&kCountryRU);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+  esp_wifi_set_max_tx_power(78);  // ≈19.5 dBm; keep within local regulations.
   g_wifiConfigured = true;
   g_lastStatus = WL_NO_SHIELD;
   start_connect_attempt();

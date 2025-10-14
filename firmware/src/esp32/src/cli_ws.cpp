@@ -15,6 +15,7 @@ namespace {
 constexpr const char* kCliWsPath = "/ws/cli";
 constexpr uint16_t kMaxCommandLength = 512;
 constexpr uint32_t kHeartbeatIntervalMs = 2000;
+constexpr uint32_t kClientIdleTimeoutMs = 15000;
 constexpr size_t kMaxWsClients = 4;
 httpd_handle_t s_ws_server = nullptr;
 unsigned long s_last_heartbeat_ms = 0;
@@ -75,6 +76,15 @@ void broadcast_heartbeat() {
     return;
   }
   const unsigned long now = millis();
+  for (size_t i = 0; i < kMaxWsClients; ++i) {
+    if (s_ws_clients[i].socket_fd < 0) {
+      continue;
+    }
+    if (now - s_ws_clients[i].last_heartbeat_ms > kClientIdleTimeoutMs) {
+      logf("[CLIWS] client timeout fd=%d", s_ws_clients[i].socket_fd);
+      unregister_client(s_ws_clients[i].socket_fd);
+    }
+  }
   if (now - s_last_heartbeat_ms < kHeartbeatIntervalMs) {
     return;
   }
@@ -156,6 +166,44 @@ esp_err_t cli_ws_handler(httpd_req_t* request) {
   if (frame.type == HTTPD_WS_TYPE_CLOSE) {
     const int socket_fd = httpd_req_to_sockfd(request);
     unregister_client(socket_fd);
+    free(payload);
+    return ESP_OK;
+  }
+
+  if (frame.type == HTTPD_WS_TYPE_PING) {
+    const unsigned long now = millis();
+    const int socket_fd = httpd_req_to_sockfd(request);
+    if (socket_fd >= 0) {
+      for (size_t i = 0; i < kMaxWsClients; ++i) {
+        if (s_ws_clients[i].socket_fd == socket_fd) {
+          s_ws_clients[i].last_heartbeat_ms = now;
+          break;
+        }
+      }
+    }
+    httpd_ws_frame_t pong = {};
+    pong.type = HTTPD_WS_TYPE_PONG;
+    pong.payload = frame.payload;
+    pong.len = frame.len;
+    esp_err_t pong_err = httpd_ws_send_frame(request, &pong);
+    if (pong_err != ESP_OK) {
+      logf("[CLIWS] failed to send pong: 0x%x", static_cast<unsigned>(pong_err));
+    }
+    free(payload);
+    return ESP_OK;
+  }
+
+  if (frame.type == HTTPD_WS_TYPE_PONG) {
+    const unsigned long now = millis();
+    const int socket_fd = httpd_req_to_sockfd(request);
+    if (socket_fd >= 0) {
+      for (size_t i = 0; i < kMaxWsClients; ++i) {
+        if (s_ws_clients[i].socket_fd == socket_fd) {
+          s_ws_clients[i].last_heartbeat_ms = now;
+          break;
+        }
+      }
+    }
     free(payload);
     return ESP_OK;
   }

@@ -973,6 +973,12 @@ class OperatorService:
                 "status_error": str(exc),
                 "status_age_s": None,
             }
+            if (
+                self._control_mode == TRANSPORT_AUTO
+                and not self._initial_probe_task
+                and not self._stop_event.is_set()
+            ):
+                self._initial_probe_task = asyncio.create_task(self._initial_probe())
             return diag
 
         now = time.time()
@@ -1202,6 +1208,12 @@ class OperatorService:
                     "command": self._poll_command,
                     "error": str(exc),
                 }
+                if (
+                    self._control_mode == TRANSPORT_AUTO
+                    and not self._initial_probe_task
+                    and not self._stop_event.is_set()
+                ):
+                    self._initial_probe_task = asyncio.create_task(self._initial_probe())
             except Exception as exc:  # pragma: no cover - unexpected
                 self._last_status_error = str(exc)
                 payload = {

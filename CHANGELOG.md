@@ -2,13 +2,17 @@
 
 ## [2025-10-14]
 
-### Added
+### Added (2025-10-14)
 
 - Persisted auto-detected Wi‑Fi WebSocket endpoint into `.env` and cache (`.wifi_last_ip`) so the operator docker stack picks up Wi‑Fi transport automatically on restart.
 - Backend: refinements to `OperatorService` and WebSocket link; added/updated tests for transport and WS link.
 - Frontend: header/control transport selector and settings/status UI tweaks.
 - Firmware: additional WebSocket CLI support, log sink and CLI WebSocket bridge improvements, camera HTTP tweaks and diagnostics.
 - Tooling & Docs: updated Docker stack script (`scripts/operator_stack_docker.sh`), `.env` and operator documentation.
+
+### Fixed (2025-10-14)
+
+- Firmware: WebSocket CLI теперь отвечает на Ping/Pong и снимает зависшие сессии, что предотвращает периодические обрывы Wi‑Fi транспорта оператора.
 
 
 ## [2025-10-13]
