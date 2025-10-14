@@ -44,6 +44,7 @@ class ESP32WSLink:
         self._listener_backoff = 0.5
         self._last_heartbeat: Optional[float] = None
         self._uptime_ms: Optional[int] = None
+        self._consecutive_failures = 0
 
     # ------------------------------------------------------------------
     def open(self) -> None:
@@ -86,14 +87,14 @@ class ESP32WSLink:
             )
         except (websocket.WebSocketException, OSError) as exc:
             self._active_endpoint = None
-            logger.warning("WebSocket connect failed: %s", exc)
+            self._log_failure("WebSocket connect failed: %s", exc)
             raise SerialNotFoundError(str(exc)) from exc
 
         try:
             ws.send(command.strip())
             raw_reply = ws.recv()
         except (websocket.WebSocketException, OSError) as exc:
-            logger.warning("WebSocket command failed: %s", exc)
+            self._log_failure("WebSocket command failed: %s", exc)
             raise SerialNotFoundError(str(exc)) from exc
         finally:
             try:
@@ -102,6 +103,7 @@ class ESP32WSLink:
                 pass
 
         self._active_endpoint = target
+        self._consecutive_failures = 0
         if isinstance(raw_reply, bytes):
             reply_text = raw_reply.decode("utf-8", errors="ignore")
         else:
@@ -268,3 +270,11 @@ class ESP32WSLink:
                 self._last_heartbeat = now
             return
         logger.debug("Unhandled WS push message: %s", text)
+
+    # ------------------------------------------------------------------
+    def _log_failure(self, template: str, error: object) -> None:
+        if self._consecutive_failures == 0:
+            logger.warning(template, error)
+        else:
+            logger.debug(template, error)
+        self._consecutive_failures += 1
