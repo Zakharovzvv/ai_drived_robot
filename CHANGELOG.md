@@ -1,5 +1,30 @@
 # Changelog
 
+## [2025-10-14]
+
+### Added
+
+- Persisted auto-detected Wi‑Fi WebSocket endpoint into `.env` and cache (`.wifi_last_ip`) so the operator docker stack picks up Wi‑Fi transport automatically on restart.
+- Backend: refinements to `OperatorService` and WebSocket link; added/updated tests for transport and WS link.
+- Frontend: header/control transport selector and settings/status UI tweaks.
+- Firmware: additional WebSocket CLI support, log sink and CLI WebSocket bridge improvements, camera HTTP tweaks and diagnostics.
+- Tooling & Docs: updated Docker stack script (`scripts/operator_stack_docker.sh`), `.env` and operator documentation.
+
+
+## [2025-10-13]
+
+### Highlights
+
+- Firmware: добавлен кольцевой буфер логов с зеркалированием UART → WebSocket, новая команда CLI `LOGS` и единый `log_sink`, обеспечивающий идентичный вывод по Wi‑Fi и при отключённом UART.
+- Backend: `OperatorService` автоматически подхватывает IP ESP32 из телеметрии, регистрирует Wi‑Fi транспорт без ручной настройки `OPERATOR_WS_ENDPOINT` и ретранслирует поток логов через `ESP32WSLink.collect_pending_logs`.
+- Backend: Wi‑Fi транспорт теперь отключается аккуратно, если отсутствует `websocket-client`; UART остаётся рабочим, а статус транспорта отражает причину недоступности.
+- Firmware: внедрён WebSocket-мост `/ws/cli`, повторяющий UART CLI по Wi‑Fi; обработчик команд вынесен в общий модуль с мьютексом для безопасного параллельного доступа с Serial и WebSocket.
+- Backend: `OperatorService` научился работать через WebSocket-транспорт (`OPERATOR_CONTROL_TRANSPORT=ws`, `OPERATOR_WS_ENDPOINT`); добавлен клиент `websocket-client` и совместимые тесты `test_ws_link.py`.
+- Backend: реализовано управление транспортом — `OperatorService` теперь поддерживает режим `auto` с fallback на UART, а REST добавил `/api/control/transport` (GET/POST) и расширенный `/api/info`, возвращающие состояние доступных каналов.
+- Tests: добавлен `backend/operator/tests/test_transport_control.py`, покрывающий fallback с Wi‑Fi на UART и смену режима управления.
+- Tooling/Docs: обновлены зависимости `backend/operator/pyproject.toml` и документация оператора (описание нового транспорта и переменных окружения).
+- Frontend: шапка консоли получила селектор режима управления Wi-Fi/UART/Auto с бейджами состояния, а вкладка Settings теперь включает карточку Control Link с диагностикой каналов и быстрым переключением.
+
 ## [2025-10-12]
 
 ### Refactor (2025-10-12)

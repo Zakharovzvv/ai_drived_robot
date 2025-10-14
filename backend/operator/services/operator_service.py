@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import base64
 import json
 import logging
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -15,9 +17,19 @@ from urllib.parse import urlparse
 from fastapi import WebSocket
 
 from ..esp32_link import CommandResult, ESP32Link, SerialNotFoundError
+from ..esp32_ws_link import ESP32WSLink
 from ..log_parser import structure_logs
 
 logger = logging.getLogger("operator.service")
+
+TRANSPORT_WIFI = "wifi"
+TRANSPORT_SERIAL = "serial"
+TRANSPORT_AUTO = "auto"
+TRANSPORT_LABELS = {
+    TRANSPORT_WIFI: "Wi-Fi",
+    TRANSPORT_SERIAL: "UART",
+}
+DEFAULT_TRANSPORT_RETRY_COOLDOWN = 5.0
 
 
 class CameraNotConfiguredError(RuntimeError):
@@ -42,7 +54,29 @@ class OperatorService:
         camera_timeout: float = 3.0,
         camera_transport: Optional[str] = None,
         camera_stream_interval: Optional[float] = None,
+        control_transport: Optional[str] = None,
+        ws_endpoint: Optional[str] = None,
     ) -> None:
+        self._link_lock = threading.RLock()
+        self._transports: Dict[str, Any] = {}
+        self._transport_endpoints: Dict[str, Optional[str]] = {}
+        self._transport_health: Dict[str, Dict[str, Any]] = {}
+        self._transport_retry_cooldown = DEFAULT_TRANSPORT_RETRY_COOLDOWN
+        cooldown_env = os.getenv("OPERATOR_TRANSPORT_RETRY_COOLDOWN")
+        if cooldown_env:
+            try:
+                self._transport_retry_cooldown = max(0.0, float(cooldown_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid OPERATOR_TRANSPORT_RETRY_COOLDOWN=%s; using %.1f",
+                    cooldown_env,
+                    DEFAULT_TRANSPORT_RETRY_COOLDOWN,
+                )
+        self._active_transport: Optional[str] = None
+        self._control_transport: Optional[str] = None
+        self._control_endpoint: Optional[str] = None
+        self._control_mode = TRANSPORT_AUTO
+        self._link: Optional[Any] = None
         port_override = port
         if not port_override:
             env_port = os.getenv("OPERATOR_SERIAL_PORT")
@@ -64,8 +98,66 @@ class OperatorService:
                 timeout_override = float(env_timeout)
             except ValueError:
                 logger.warning("Invalid OPERATOR_SERIAL_TIMEOUT=%s; using %s", env_timeout, timeout)
+        self._serial_timeout = timeout_override
 
-        self._link = ESP32Link(port=port_override, baudrate=baud_override, timeout=timeout_override)
+        transport_override = control_transport
+        if transport_override is None:
+            env_transport = os.getenv("OPERATOR_CONTROL_TRANSPORT")
+            if env_transport and env_transport.strip():
+                transport_override = env_transport
+        transport_mode_raw = (transport_override or TRANSPORT_AUTO).strip().lower()
+        if transport_mode_raw in {"ws", "wifi"}:
+            desired_mode = TRANSPORT_WIFI
+        elif transport_mode_raw in {"serial", "uart"}:
+            desired_mode = TRANSPORT_SERIAL
+        elif transport_mode_raw == TRANSPORT_AUTO:
+            desired_mode = TRANSPORT_AUTO
+        else:
+            logger.warning(
+                "Unsupported OPERATOR_CONTROL_TRANSPORT=%s; defaulting to auto",
+                transport_mode_raw,
+            )
+            desired_mode = TRANSPORT_AUTO
+
+        ws_override = ws_endpoint
+        if ws_override is None:
+            env_ws = os.getenv("OPERATOR_WS_ENDPOINT")
+            if env_ws and env_ws.strip():
+                ws_override = env_ws
+        ws_clean = ws_override.strip() if isinstance(ws_override, str) else None
+
+        self._ws_static_endpoint = ws_clean
+        self._ws_auto_enabled = False
+
+        if ws_clean:
+            if self._configure_wifi_transport(ws_clean, timeout_override):
+                logger.info("Wi-Fi transport enabled with static endpoint %s", ws_clean)
+        else:
+            self._ws_auto_enabled = True
+            if desired_mode == TRANSPORT_WIFI:
+                logger.info(
+                    "Wi-Fi transport will be auto-configured once the ESP32 reports its IP address"
+                )
+
+        serial_link = ESP32Link(
+            port=port_override,
+            baudrate=baud_override,
+            timeout=timeout_override,
+        )
+        self._transports[TRANSPORT_SERIAL] = serial_link
+        self._transport_endpoints[TRANSPORT_SERIAL] = port_override
+        self._transport_health[TRANSPORT_SERIAL] = {
+            "available": False,
+            "last_error": None,
+            "last_success": None,
+            "last_failure": None,
+        }
+
+        if not self._transports:
+            raise ValueError("No control transports configured; configure Wi-Fi and/or UART")
+
+        self._control_mode = desired_mode
+        self._set_initial_transport()
         self._poll_command = poll_command
         self._poll_interval = poll_interval
         self._poll_task: Optional[asyncio.Task[None]] = None
@@ -75,6 +167,7 @@ class OperatorService:
         self._log_clients: Set[asyncio.Queue[dict[str, Any]]] = set()
         self._log_clients_lock = asyncio.Lock()
         self._log_task: Optional[asyncio.Task[None]] = None
+        self._initial_probe_task: Optional[asyncio.Task[None]] = None
         self._log_sequence = 0
         override = (
             camera_snapshot_url
@@ -119,10 +212,230 @@ class OperatorService:
         self._shelf_cache_timestamp: Optional[float] = None
         self._shelf_cache_ttl = 1.0
 
+    def _configure_wifi_transport(self, endpoint: str, timeout: float) -> bool:
+        try:
+            ws_link = ESP32WSLink(url=endpoint, timeout=timeout)
+        except SerialNotFoundError as exc:
+            logger.warning("Wi-Fi transport unavailable at %s: %s", endpoint, exc)
+            self._transports.pop(TRANSPORT_WIFI, None)
+            self._transport_endpoints[TRANSPORT_WIFI] = endpoint
+            state = self._transport_health.setdefault(
+                TRANSPORT_WIFI,
+                {"available": False, "last_error": None, "last_success": None, "last_failure": None},
+            )
+            state["available"] = False
+            state["last_error"] = str(exc)
+            state["last_failure"] = time.time()
+            return False
+
+        self._transports[TRANSPORT_WIFI] = ws_link
+        self._transport_endpoints[TRANSPORT_WIFI] = endpoint
+        self._transport_health.setdefault(
+            TRANSPORT_WIFI,
+            {"available": False, "last_error": None, "last_success": None, "last_failure": None},
+        )
+        return True
+
+    def _set_initial_transport(self) -> None:
+        if self._control_mode == TRANSPORT_WIFI and TRANSPORT_WIFI in self._transports:
+            self._set_active_transport(TRANSPORT_WIFI)
+            return
+        if self._control_mode == TRANSPORT_SERIAL and TRANSPORT_SERIAL in self._transports:
+            self._set_active_transport(TRANSPORT_SERIAL)
+            return
+        if self._control_mode == TRANSPORT_AUTO:
+            if TRANSPORT_WIFI in self._transports:
+                self._set_active_transport(TRANSPORT_WIFI)
+                return
+            if TRANSPORT_SERIAL in self._transports:
+                self._set_active_transport(TRANSPORT_SERIAL)
+                return
+        self._set_active_transport(None)
+
+    def _set_active_transport(self, transport: Optional[str]) -> None:
+        if transport is None:
+            self._active_transport = None
+            self._control_transport = None
+            self._control_endpoint = None
+            self._link = None
+            return
+
+        link = self._transports.get(transport)
+        if not link:
+            self._active_transport = None
+            self._control_transport = None
+            self._control_endpoint = None
+            self._link = None
+            return
+
+        self._active_transport = transport
+        self._control_transport = transport
+        self._control_endpoint = self._transport_endpoints.get(transport)
+        self._link = link
+
+    def _preferred_transport_order(self) -> List[str]:
+        if self._control_mode == TRANSPORT_WIFI:
+            return [TRANSPORT_WIFI]
+        if self._control_mode == TRANSPORT_SERIAL:
+            return [TRANSPORT_SERIAL]
+
+        order: List[str] = []
+        if TRANSPORT_WIFI in self._transports:
+            order.append(TRANSPORT_WIFI)
+        if TRANSPORT_SERIAL in self._transports:
+            order.append(TRANSPORT_SERIAL)
+        if self._active_transport and self._active_transport not in order:
+            order.insert(0, self._active_transport)
+        return order
+
+    def _ensure_wifi_transport(self, status: Dict[str, Any]) -> None:
+        if not self._ws_auto_enabled:
+            return
+        wifi_connected = bool(status.get("wifi_connected"))
+        wifi_ip_raw = status.get("wifi_ip")
+        wifi_ip = str(wifi_ip_raw or "").strip()
+        if not wifi_connected or not wifi_ip or wifi_ip in {"0.0.0.0", "0", "none"}:
+            return
+
+        endpoint = f"ws://{wifi_ip}:81/ws/cli"
+        with self._link_lock:
+            current_endpoint = self._transport_endpoints.get(TRANSPORT_WIFI)
+            if current_endpoint == endpoint and TRANSPORT_WIFI in self._transports:
+                return
+
+            existing_link = self._transports.get(TRANSPORT_WIFI)
+            if existing_link and hasattr(existing_link, "close"):
+                with contextlib.suppress(Exception):
+                    existing_link.close()
+
+            if not self._configure_wifi_transport(endpoint, self._serial_timeout):
+                return
+
+            if self._control_mode in {TRANSPORT_WIFI, TRANSPORT_AUTO}:
+                if self._control_mode == TRANSPORT_WIFI or self._active_transport != TRANSPORT_WIFI:
+                    logger.info("Wi-Fi control transport registered at %s", endpoint)
+                self._set_active_transport(TRANSPORT_WIFI)
+
+    def _record_transport_success(self, transport: str) -> None:
+        state = self._transport_health.setdefault(
+            transport,
+            {"available": False, "last_error": None, "last_success": None, "last_failure": None},
+        )
+        state["available"] = True
+        state["last_error"] = None
+        state["last_success"] = time.time()
+
+    def _record_transport_failure(self, transport: str, error: str) -> None:
+        state = self._transport_health.setdefault(
+            transport,
+            {"available": False, "last_error": None, "last_success": None, "last_failure": None},
+        )
+        state["available"] = False
+        state["last_error"] = error
+        state["last_failure"] = time.time()
+
+    def _should_skip_transport(self, transport: str) -> bool:
+        if self._control_mode != TRANSPORT_AUTO:
+            return False
+        if transport == self._active_transport:
+            return False
+        state = self._transport_health.get(transport)
+        if not state or state.get("available", False):
+            return False
+        last_failure = state.get("last_failure")
+        if last_failure is None:
+            return False
+        return (time.time() - last_failure) < self._transport_retry_cooldown
+
+    def _control_state_snapshot(self) -> Dict[str, Any]:
+        transports: List[Dict[str, Any]] = []
+        for transport_id in sorted(self._transports.keys()):
+            health = self._transport_health.get(transport_id, {})
+            transports.append(
+                {
+                    "id": transport_id,
+                    "label": TRANSPORT_LABELS.get(transport_id, transport_id.upper()),
+                    "endpoint": self._transport_endpoints.get(transport_id),
+                    "available": bool(health.get("available", False)),
+                    "last_error": health.get("last_error"),
+                    "last_success": health.get("last_success"),
+                    "last_failure": health.get("last_failure"),
+                }
+            )
+        return {
+            "mode": self._control_mode,
+            "active": self._active_transport,
+            "transports": transports,
+        }
+
+    def get_control_state(self) -> Dict[str, Any]:
+        return self._control_state_snapshot()
+
+    async def set_control_mode(self, mode: str) -> Dict[str, Any]:
+        normalized = (mode or "").strip().lower()
+        if normalized in {TRANSPORT_AUTO, "auto"}:
+            target = TRANSPORT_AUTO
+        elif normalized in {TRANSPORT_WIFI, "wifi", "ws", "websocket"}:
+            target = TRANSPORT_WIFI
+        elif normalized in {TRANSPORT_SERIAL, "serial", "uart"}:
+            target = TRANSPORT_SERIAL
+        else:
+            raise ValueError(f"Unsupported control mode: {mode!r}")
+
+        schedule_probe = False
+        with self._link_lock:
+            if target == TRANSPORT_AUTO:
+                self._control_mode = TRANSPORT_AUTO
+                if self._active_transport not in self._transports:
+                    self._set_active_transport(None)
+                schedule_probe = True
+            else:
+                if target not in self._transports:
+                    raise ValueError(f"Transport {target} is not configured")
+                self._control_mode = target
+                self._set_active_transport(target)
+
+        if schedule_probe and not self._initial_probe_task:
+            self._initial_probe_task = asyncio.create_task(self._initial_probe())
+
+        return self._control_state_snapshot()
+
+    async def _initial_probe(self) -> None:
+        try:
+            order = self._preferred_transport_order()
+            for transport_id in order:
+                if self._should_skip_transport(transport_id):
+                    continue
+                link = self._transports.get(transport_id)
+                if not link:
+                    continue
+                try:
+                    await asyncio.to_thread(
+                        link.run_command,
+                        self._poll_command,
+                        raise_on_error=False,
+                    )
+                    self._record_transport_success(transport_id)
+                    with self._link_lock:
+                        self._set_active_transport(transport_id)
+                    return
+                except SerialNotFoundError as exc:
+                    self._record_transport_failure(transport_id, str(exc))
+                    if self._control_mode != TRANSPORT_AUTO:
+                        return
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.exception("Initial probe failed for transport %s", transport_id)
+            logger.warning("No control transport available during initial probe")
+        finally:
+            self._initial_probe_task = None
+
+
     async def start(self) -> None:
         if self._poll_task and not self._poll_task.done():
             return
         self._stop_event.clear()
+        if self._control_mode == TRANSPORT_AUTO and not self._initial_probe_task:
+            self._initial_probe_task = asyncio.create_task(self._initial_probe())
         self._poll_task = asyncio.create_task(self._poll_loop())
         self._log_task = asyncio.create_task(self._log_loop())
 
@@ -132,7 +445,13 @@ class OperatorService:
             await self._poll_task
         if self._log_task:
             await self._log_task
-        await asyncio.to_thread(self._link.close)
+        if self._initial_probe_task:
+            self._initial_probe_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._initial_probe_task
+            self._initial_probe_task = None
+        for link in set(self._transports.values()):
+            await asyncio.to_thread(link.close)
         self._poll_task = None
         self._log_task = None
 
@@ -142,17 +461,47 @@ class OperatorService:
         *,
         raise_on_error: bool = True,
     ) -> CommandResult:
-        try:
-            return await asyncio.to_thread(
-                self._link.run_command,
-                command,
-                raise_on_error=raise_on_error,
-            )
-        except SerialNotFoundError:
-            raise
-        except Exception as exc:  # pragma: no cover - safeguard
-            logger.exception("Failed to run command '%s'", command)
-            raise exc
+        order = self._preferred_transport_order()
+        if not order:
+            raise SerialNotFoundError("No control transports configured")
+
+        last_error: Optional[SerialNotFoundError] = None
+
+        for transport_id in order:
+            if self._should_skip_transport(transport_id):
+                continue
+            link = self._transports.get(transport_id)
+            if not link:
+                continue
+            try:
+                result = await asyncio.to_thread(
+                    link.run_command,
+                    command,
+                    raise_on_error=raise_on_error,
+                )
+            except SerialNotFoundError as exc:
+                self._record_transport_failure(transport_id, str(exc))
+                last_error = exc
+                if self._control_mode != TRANSPORT_AUTO:
+                    raise
+                continue
+            except Exception as exc:  # pragma: no cover - safeguard
+                logger.exception("Failed to run command '%s' via %s", command, transport_id)
+                last_error = SerialNotFoundError(str(exc))
+                if self._control_mode != TRANSPORT_AUTO:
+                    raise last_error
+                continue
+
+            self._record_transport_success(transport_id)
+            with self._link_lock:
+                if transport_id != self._active_transport:
+                    logger.info("Switching control transport to %s", transport_id)
+                self._set_active_transport(transport_id)
+            return result
+
+        if last_error is not None:
+            raise last_error
+        raise SerialNotFoundError("All control transports are unavailable")
 
     async def get_camera_snapshot(self) -> Tuple[bytes, str]:
         url, source = self._resolve_camera_snapshot(require_stream=True)
@@ -188,14 +537,31 @@ class OperatorService:
 
     def describe(self) -> dict[str, Any]:
         transport = self._determine_camera_transport()
-        port = self._link.active_port or self._link.requested_port
+        serial_link = self._transports.get(TRANSPORT_SERIAL)
+        serial_port = None
+        if isinstance(serial_link, ESP32Link):
+            serial_port = serial_link.active_port or serial_link.requested_port
+        if serial_port is None:
+            serial_port = self._transport_endpoints.get(TRANSPORT_SERIAL)
+
+        control_state = self._control_state_snapshot()
+        active_endpoint = None
+        if self._active_transport == TRANSPORT_SERIAL and isinstance(serial_link, ESP32Link):
+            active_endpoint = serial_link.active_port or serial_link.requested_port
+        if active_endpoint is None and self._active_transport:
+            active_endpoint = self._transport_endpoints.get(self._active_transport)
+
         status_fresh = self._status_is_recent()
         snapshot_url, source = self._resolve_camera_snapshot()
         streaming_flag = (
             bool((self._last_status or {}).get("cam_streaming")) if status_fresh else False
         )
         return {
-            "serial_port": port,
+            "serial_port": serial_port,
+            "control_mode": control_state["mode"],
+            "control_transport": control_state["active"],
+            "control_endpoint": active_endpoint,
+            "available_transports": control_state["transports"],
             "camera_snapshot_url": snapshot_url,
             "camera_snapshot_source": source,
             "camera_transport": transport,
@@ -558,11 +924,20 @@ class OperatorService:
 
     async def diagnostics(self) -> dict[str, Any]:
         info = self.describe()
+        serial_link = self._transports.get(TRANSPORT_SERIAL)
+        requested_port = None
+        active_port = None
+        if isinstance(serial_link, ESP32Link):
+            requested_port = serial_link.requested_port
+            active_port = serial_link.active_port
+        if requested_port is None:
+            requested_port = self._transport_endpoints.get(TRANSPORT_SERIAL)
+
         diag: dict[str, Any] = {
             "timestamp": time.time(),
             "serial": {
-                "requested_port": self._link.requested_port,
-                "active_port": self._link.active_port,
+                "requested_port": requested_port,
+                "active_port": active_port,
                 "connected": False,
             },
             "camera": {
@@ -619,8 +994,13 @@ class OperatorService:
 
         snapshot = dict(self._last_status) if status_fresh else {}
 
-        diag["serial"]["active_port"] = self._link.active_port
-        diag["serial"]["connected"] = bool(self._link.active_port and status_fresh)
+        active_port = None
+        if isinstance(serial_link, ESP32Link):
+            active_port = serial_link.active_port
+        if active_port is None:
+            active_port = self._transport_endpoints.get(TRANSPORT_SERIAL)
+        diag["serial"]["active_port"] = active_port
+        diag["serial"]["connected"] = bool(active_port and status_fresh)
         diag["serial"]["stale"] = not status_fresh
         diag["serial"]["status_age_s"] = (
             None
@@ -712,7 +1092,10 @@ class OperatorService:
 
     def get_recent_logs(self, limit: int = 200) -> List[dict[str, Any]]:
         limit = max(1, min(limit, 1000))
-        raw_entries = self._link.recent_logs(limit * 4)
+        serial_link = self._transports.get(TRANSPORT_SERIAL)
+        if not isinstance(serial_link, ESP32Link):
+            return []
+        raw_entries = serial_link.recent_logs(limit * 4)
         structured = structure_logs(raw_entries)
         if len(structured) > limit:
             structured = structured[-limit:]
@@ -762,11 +1145,25 @@ class OperatorService:
 
     async def _log_loop(self) -> None:
         while not self._stop_event.is_set():
-            try:
-                entries = await asyncio.to_thread(self._link.collect_pending_logs)
-            except SerialNotFoundError as exc:
-                logger.warning("Log streaming paused: %s", exc)
-                entries = []
+            entries: List[tuple[float, str]] = []
+            with self._link_lock:
+                wifi_link = self._transports.get(TRANSPORT_WIFI)
+                serial_link = self._transports.get(TRANSPORT_SERIAL)
+
+            if isinstance(wifi_link, ESP32WSLink):
+                try:
+                    entries = await asyncio.to_thread(wifi_link.collect_pending_logs)
+                except SerialNotFoundError as exc:
+                    logger.debug("Wi-Fi log collection unavailable: %s", exc)
+                    entries = []
+
+            if not entries and isinstance(serial_link, ESP32Link):
+                try:
+                    entries = await asyncio.to_thread(serial_link.collect_pending_logs)
+                except SerialNotFoundError as exc:
+                    logger.debug("Serial log collection unavailable: %s", exc)
+                    entries = []
+
             if entries:
                 structured = structure_logs(entries)
                 if structured:
@@ -786,6 +1183,8 @@ class OperatorService:
                 if result.raw and result.data:
                     merged = dict(self._last_status)
                     merged.update(result.data)
+                    if merged:
+                        self._ensure_wifi_transport(merged)
                     if "cam_streaming" in merged or "wifi_connected" in merged:
                         self._last_status = merged
                     self._last_status_timestamp = time.time()

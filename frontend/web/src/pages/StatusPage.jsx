@@ -62,11 +62,26 @@ function buildCards(diagnostics) {
     ].filter(Boolean),
   });
 
+  const wifiHasState = wifi.connected === true || wifi.connected === false;
+  let wifiValue = "Unknown";
+  let wifiTone = "default";
+  if (!statusFresh) {
+    wifiValue = "Unavailable";
+    wifiTone = "warn";
+  } else if (wifiHasState) {
+    wifiValue = wifi.connected ? "Connected" : "Disconnected";
+    wifiTone = wifi.connected ? "ok" : "warn";
+  }
+  const wifiDetails = [wifi.ip && `IP: ${wifi.ip}`];
+  if (!statusFresh) {
+    wifiDetails.unshift("No recent Wi-Fi telemetry");
+  }
+
   cards.push({
     title: "Wi-Fi",
-    value: wifi.connected === true ? "Connected" : wifi.connected === false ? "Disconnected" : "Unknown",
-    tone: wifi.connected === false ? "warn" : wifi.connected === true ? "ok" : "default",
-    details: [wifi.ip && `IP: ${wifi.ip}`].filter(Boolean),
+    value: wifiValue,
+    tone: wifiTone,
+    details: wifiDetails.filter(Boolean),
   });
 
   cards.push({

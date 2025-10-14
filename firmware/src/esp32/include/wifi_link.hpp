@@ -5,3 +5,4 @@
 void wifi_init();
 bool wifi_is_connected();
 IPAddress wifi_local_ip();
+void wifi_tick();

@@ -45,6 +45,72 @@ function buildWsUrl(path) {
   return `${protocol}://${window.location.host}${originPrefix}${trimmedPath}`;
 }
 
+const EMPTY_CONTROL_STATE = Object.freeze({
+  mode: "auto",
+  active: null,
+  endpoint: null,
+  transports: [],
+});
+
+function normalizeControlState(raw, previous = EMPTY_CONTROL_STATE) {
+  const base = previous || EMPTY_CONTROL_STATE;
+  if (!raw || typeof raw !== "object") {
+    return {
+      ...base,
+      transports: Array.isArray(base.transports) ? base.transports.map((item) => ({ ...item })) : [],
+    };
+  }
+
+  const sourceList = Array.isArray(raw.transports)
+    ? raw.transports
+    : Array.isArray(raw.available_transports)
+    ? raw.available_transports
+    : Array.isArray(base.transports)
+    ? base.transports
+    : [];
+
+  const transportsMap = new Map();
+  sourceList.forEach((entry) => {
+    if (!entry) {
+      return;
+    }
+    const identifier = (entry.id || entry.transport || entry.name || "").toString().trim().toLowerCase();
+    if (!identifier) {
+      return;
+    }
+    const labelSource = entry.label || entry.name || entry.id || identifier.toUpperCase();
+    const label = typeof labelSource === "string" ? labelSource : identifier.toUpperCase();
+    transportsMap.set(identifier, {
+      id: identifier,
+      label,
+      endpoint: entry.endpoint ?? entry.url ?? entry.address ?? null,
+      available:
+        entry.available !== undefined
+          ? Boolean(entry.available)
+          : entry.connected !== undefined
+          ? Boolean(entry.connected)
+          : Boolean(entry.ok),
+      last_error: entry.last_error ?? null,
+      last_success: entry.last_success ?? null,
+      last_failure: entry.last_failure ?? null,
+    });
+  });
+
+  const transports = Array.from(transportsMap.values());
+  const modeRaw = raw.mode ?? raw.control_mode ?? base.mode ?? "auto";
+  const mode = modeRaw ? modeRaw.toString().trim().toLowerCase() || "auto" : "auto";
+  const activeRaw = raw.active ?? raw.control_transport ?? base.active;
+  const active = activeRaw ? activeRaw.toString().trim().toLowerCase() : null;
+  const endpoint = raw.endpoint ?? raw.control_endpoint ?? base.endpoint ?? null;
+
+  return {
+    mode,
+    active,
+    endpoint,
+    transports,
+  };
+}
+
 function deriveHeaderStatus(diagnostics) {
   if (!diagnostics || typeof diagnostics !== "object") {
     return { robotConnected: false, medium: null, ip: null, stale: true };
@@ -174,6 +240,8 @@ export function OperatorProvider({ children }) {
   const [cameraConfigLoading, setCameraConfigLoading] = useState(false);
   const [cameraConfigUpdating, setCameraConfigUpdating] = useState(false);
   const [cameraTogglePending, setCameraTogglePending] = useState(false);
+  const [controlState, setControlState] = useState(EMPTY_CONTROL_STATE);
+  const [controlModePending, setControlModePending] = useState(false);
 
   const [shelfMapState, setShelfMapState] = useState(null);
   const [shelfPalette, setShelfPalette] = useState(normalizePalette(DEFAULT_SHELF_PALETTE));
@@ -275,6 +343,44 @@ export function OperatorProvider({ children }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!toasts.length) {
+      return undefined;
+    }
+
+    const now = Date.now();
+    const nextExpiry = toasts.reduce((soonest, toast) => {
+      if (!toast.expiresAt) {
+        return soonest;
+      }
+      return Math.min(soonest, toast.expiresAt);
+    }, Number.POSITIVE_INFINITY);
+
+    if (!Number.isFinite(nextExpiry)) {
+      return undefined;
+    }
+
+    const handleSweep = () => {
+      const cutoff = Date.now();
+      setToasts((prev) => {
+        let mutated = false;
+        const filtered = prev.filter((toast) => {
+          if (!toast.expiresAt || toast.expiresAt > cutoff) {
+            return true;
+          }
+          clearToastTimer(toast.id);
+          mutated = true;
+          return false;
+        });
+        return mutated ? filtered : prev;
+      });
+    };
+
+    const delay = Math.max(0, nextExpiry - now + 25);
+    const sweepId = window.setTimeout(handleSweep, delay);
+    return () => window.clearTimeout(sweepId);
+  }, [toasts, clearToastTimer]);
+
   const confirm = useCallback((title, message) => {
     return new Promise((resolve) => {
       modalResolverRef.current = resolve;
@@ -356,6 +462,17 @@ export function OperatorProvider({ children }) {
     try {
       const payload = await requestJson("/api/info");
       setServiceInfo(payload);
+      setControlState((previous) =>
+        normalizeControlState(
+          {
+            mode: payload?.control_mode,
+            active: payload?.control_transport,
+            endpoint: payload?.control_endpoint,
+            transports: payload?.available_transports,
+          },
+          previous
+        )
+      );
       const cameraPatch = extractCameraStateFromServiceInfo(payload);
       updateCameraState(cameraPatch);
       return payload;
@@ -365,6 +482,69 @@ export function OperatorProvider({ children }) {
       return null;
     }
   }, [requestJson, updateCameraState]);
+
+  const fetchControlState = useCallback(
+    async ({ silent = false } = {}) => {
+      try {
+        const payload = await requestJson("/api/control/transport");
+        setControlState((previous) => normalizeControlState(payload, previous));
+        return payload;
+      } catch (error) {
+        console.error("Control transport fetch error:", error);
+        if (!silent) {
+          showToast(error.message || "Failed to load control transport state", "error");
+        }
+        throw error;
+      }
+    },
+    [requestJson, showToast]
+  );
+
+  const changeControlTransport = useCallback(
+    async (mode, { silent = false } = {}) => {
+      if (!mode && mode !== "") {
+        return null;
+      }
+      const normalizedMode = mode.toString().trim().toLowerCase();
+      setControlModePending(true);
+      try {
+        const payload = await requestJson("/api/control/transport", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: normalizedMode }),
+        });
+        let computedState = null;
+        setControlState((previous) => {
+          const nextState = normalizeControlState(payload, previous);
+          computedState = nextState;
+          return nextState;
+        });
+        await Promise.allSettled([
+          fetchServiceInfo(),
+          fetchControlState({ silent: true }),
+          fetchDiagnostics(),
+        ]);
+        if (!silent && computedState) {
+          const activeLabel =
+            computedState.mode === "auto"
+              ? "Auto (Wi-Fi -> UART)"
+              : computedState.transports.find((entry) => entry.id === computedState.mode)?.label ||
+                computedState.mode.toUpperCase();
+          showToast(`Control link set to ${activeLabel}`, "success");
+        }
+        return computedState;
+      } catch (error) {
+        console.error("Failed to change control transport:", error);
+        if (!silent) {
+          showToast(error.message || "Failed to update control link", "error");
+        }
+        throw error;
+      } finally {
+        setControlModePending(false);
+      }
+    },
+    [requestJson, fetchServiceInfo, fetchControlState, fetchDiagnostics, showToast]
+  );
 
   const sendCommand = useCallback(
     async (command, raiseOnError = false) => {
@@ -844,14 +1024,19 @@ export function OperatorProvider({ children }) {
   useEffect(() => {
     fetchDiagnostics();
     fetchServiceInfo();
+    fetchControlState({ silent: true }).catch(() => {});
     connectTelemetrySocket();
     const diagInterval = window.setInterval(fetchDiagnostics, DIAGNOSTICS_REFRESH_INTERVAL_MS);
     const infoInterval = window.setInterval(fetchServiceInfo, INFO_REFRESH_INTERVAL_MS);
+    const controlInterval = window.setInterval(() => {
+      fetchControlState({ silent: true }).catch(() => {});
+    }, INFO_REFRESH_INTERVAL_MS);
     return () => {
       window.clearInterval(diagInterval);
       window.clearInterval(infoInterval);
+      window.clearInterval(controlInterval);
     };
-  }, [fetchDiagnostics, fetchServiceInfo, connectTelemetrySocket]);
+  }, [fetchDiagnostics, fetchServiceInfo, fetchControlState, connectTelemetrySocket]);
 
   const filteredLogs = useMemo(() => {
     const search = logFilters.search.trim().toLowerCase();
@@ -891,6 +1076,8 @@ export function OperatorProvider({ children }) {
       diagnostics,
       serviceInfo,
       headerStatus,
+  controlState,
+  controlModePending,
       telemetrySamples,
       commandOutput,
       toasts,
@@ -901,6 +1088,8 @@ export function OperatorProvider({ children }) {
       modalState,
       fetchDiagnostics,
       fetchServiceInfo,
+  fetchControlState,
+  changeControlTransport,
       startTask,
       executeRawCommand,
       brake,
@@ -947,6 +1136,8 @@ export function OperatorProvider({ children }) {
       modalState,
       fetchDiagnostics,
       fetchServiceInfo,
+  fetchControlState,
+  changeControlTransport,
       startTask,
       executeRawCommand,
       brake,

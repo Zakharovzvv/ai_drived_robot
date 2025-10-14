@@ -52,6 +52,127 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
 
+ENV_FILE="${REPO_ROOT}/.env"
+env_loaded=false
+load_env() {
+  if [[ "${env_loaded}" == true ]]; then
+    return
+  fi
+  if [[ -f "${ENV_FILE}" ]]; then
+    echo "[operator] Loading environment from ${ENV_FILE}"
+    local -a preserve_names=()
+    local -a preserve_values=()
+    local line name value
+    while IFS= read -r line; do
+      if [[ "${line}" == OPERATOR_* ]]; then
+        name="${line%%=*}"
+        value="${line#*=}"
+        preserve_names+=("${name}")
+        preserve_values+=("${value}")
+      fi
+    done < <(env)
+    # shellcheck disable=SC1090
+    set -a
+    source "${ENV_FILE}"
+    set +a
+    for idx in "${!preserve_names[@]}"; do
+      export "${preserve_names[idx]}=${preserve_values[idx]}"
+    done
+  fi
+  env_loaded=true
+}
+
+load_env
+
+WIFI_CACHE_FILE="${REPO_ROOT}/.wifi_last_ip"
+ESP32_MAC_PREFIX_DEFAULT="cc:ba:97"
+
+persist_env_var() {
+  local name="$1"
+  local value="$2"
+  python3 - "$ENV_FILE" "$name" "$value" <<'PY'
+import sys
+from pathlib import Path
+
+env_path = Path(sys.argv[1])
+name = sys.argv[2]
+value = sys.argv[3]
+
+try:
+  lines = env_path.read_text(encoding="utf-8").splitlines()
+except FileNotFoundError:
+  lines = []
+
+line_prefix = f"{name}="
+new_line = f"{line_prefix}{value}"
+
+for idx, line in enumerate(lines):
+  if line.startswith(line_prefix):
+    lines[idx] = new_line
+    break
+else:
+  lines.append(new_line)
+
+env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
+discover_wifi_ip() {
+  local ip=""
+
+  if [[ -f "${WIFI_CACHE_FILE}" ]]; then
+    ip="$(tr -d '\r\n' < "${WIFI_CACHE_FILE}" | head -n1 | tr -d ' ')"
+    if [[ -n "${ip}" ]]; then
+      if ping -c1 -W1 "${ip}" >/dev/null 2>&1; then
+        echo "${ip}"
+        return 0
+      fi
+    fi
+    ip=""
+  fi
+
+  local screenlog="${REPO_ROOT}/firmware/screenlog.0"
+  if [[ -z "${ip}" && -f "${screenlog}" ]]; then
+    ip="$(grep -Eo 'IP=[0-9]{1,3}(\.[0-9]{1,3}){3}' "${screenlog}" | tail -n1 | cut -d'=' -f2)"
+    if [[ -n "${ip}" ]]; then
+      echo "${ip}" > "${WIFI_CACHE_FILE}"
+      echo "${ip}"
+      return 0
+    fi
+  fi
+
+  local mac_prefix="${OPERATOR_WIFI_MAC_PREFIX:-${ESP32_MAC_PREFIX_DEFAULT}}"
+  if [[ -z "${mac_prefix}" ]]; then
+    mac_prefix="${ESP32_MAC_PREFIX_DEFAULT}"
+  fi
+  if command -v arp >/dev/null 2>&1; then
+    ip="$(arp -an | awk -v mac="${mac_prefix,,}" 'BEGIN{IGNORECASE=1}{gsub(/[()]/,""); if(index(tolower($4), mac)==1){print $2; exit}}')"
+    if [[ -n "${ip}" ]]; then
+      echo "${ip}" > "${WIFI_CACHE_FILE}"
+      echo "${ip}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+ensure_ws_endpoint() {
+  if [[ -n "${OPERATOR_WS_ENDPOINT:-}" ]]; then
+    return 0
+  fi
+  local ip
+  if ip="$(discover_wifi_ip)"; then
+    export OPERATOR_WS_ENDPOINT="ws://${ip}:81/ws/cli"
+    echo "[docker-operator] Auto-detected Wi-Fi endpoint at ${OPERATOR_WS_ENDPOINT}"
+    echo "${ip}" > "${WIFI_CACHE_FILE}"
+    persist_env_var "OPERATOR_WS_ENDPOINT" "${OPERATOR_WS_ENDPOINT}"
+    return 0
+  fi
+  echo "[docker-operator] Unable to auto-detect Wi-Fi endpoint; Wi-Fi control will remain unavailable." >&2
+  return 1
+}
+
 if [[ ! -f "${COMPOSE_FILE}" ]]; then
   echo "[docker-operator] Compose file not found at ${COMPOSE_FILE}" >&2
   exit 1
@@ -75,9 +196,91 @@ if [[ -z "${COMPOSE_BIN}" ]]; then
   exit 1
 fi
 
+BRIDGE_SCRIPT="${REPO_ROOT}/scripts/operator_serial_bridge.sh"
+BRIDGE_PID_FILE="${REPO_ROOT}/.serial_bridge.pid"
+BRIDGE_LOG_FILE="${REPO_ROOT}/.serial_bridge.log"
+BRIDGE_DEVICE="${OPERATOR_BRIDGE_DEVICE:-}"
+BRIDGE_TCP_PORT="${OPERATOR_BRIDGE_TCP_PORT:-3333}"
+
+should_manage_bridge() {
+  if [[ -z "${BRIDGE_DEVICE}" ]]; then
+    return 1
+  fi
+  if [[ -z "${SERVICES}" || "${SERVICES}" == "backend" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+bridge_running() {
+  if [[ ! -f "${BRIDGE_PID_FILE}" ]]; then
+    return 1
+  fi
+  local pid
+  pid="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
+  if [[ -z "${pid}" ]]; then
+    rm -f "${BRIDGE_PID_FILE}"
+    return 1
+  fi
+  if kill -0 "${pid}" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "${BRIDGE_PID_FILE}"
+  return 1
+}
+
+start_bridge() {
+  if ! should_manage_bridge; then
+    return 0
+  fi
+  if bridge_running; then
+    return 0
+  fi
+  if [[ ! -e "${BRIDGE_DEVICE}" ]]; then
+    echo "[docker-operator] Serial bridge device ${BRIDGE_DEVICE} not found; continuing without UART bridge." >&2
+    return 0
+  fi
+  if [[ ! -x "${BRIDGE_SCRIPT}" ]]; then
+    echo "[docker-operator] Serial bridge script not found at ${BRIDGE_SCRIPT}" >&2
+    return 1
+  fi
+  nohup "${BRIDGE_SCRIPT}" "${BRIDGE_DEVICE}" "${BRIDGE_TCP_PORT}" > "${BRIDGE_LOG_FILE}" 2>&1 &
+  local pid=$!
+  echo "${pid}" > "${BRIDGE_PID_FILE}"
+  sleep 1
+  if ! kill -0 "${pid}" 2>/dev/null; then
+    echo "[docker-operator] Failed to start serial bridge (see ${BRIDGE_LOG_FILE}). Proceeding without UART bridge." >&2
+    rm -f "${BRIDGE_PID_FILE}"
+    return 0
+  fi
+  return 0
+}
+
+stop_bridge() {
+  if ! should_manage_bridge; then
+    return 0
+  fi
+  if [[ ! -f "${BRIDGE_PID_FILE}" ]]; then
+    return 0
+  fi
+  local pid
+  pid="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
+  if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+    local pgid
+    pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ')"
+    if [[ -n "${pgid}" ]]; then
+      kill -- -"${pgid}" 2>/dev/null || true
+    else
+      kill "${pid}" 2>/dev/null || true
+    fi
+    wait "${pid}" 2>/dev/null || true
+  fi
+  rm -f "${BRIDGE_PID_FILE}"
+  return 0
+}
+
 run_compose() {
   # shellcheck disable=SC2086
-  # If SERVICES is empty, run against whole compose file; otherwise append service names
   if [[ -z "${SERVICES}" ]]; then
     ${COMPOSE_BIN} -f "${COMPOSE_FILE}" "$@"
   else
@@ -90,32 +293,36 @@ case "${action}" in
     run_compose build --pull
     ;;
   start)
+    if ! start_bridge; then
+      exit 1
+    fi
+    ensure_ws_endpoint || true
     run_compose up -d
     run_compose ps
     ;;
   stop)
-    # For stopping/removing specific services use stop + rm -f; `down` always removes the whole compose project
     if [[ -z "${SERVICES}" ]]; then
       run_compose down
     else
-      # stop and remove the specified services
       run_compose stop
-      # remove containers for the specific services
       ${COMPOSE_BIN} rm -f ${SERVICES}
     fi
+    stop_bridge
     ;;
   restart)
+    stop_bridge
     if [[ -z "${SERVICES}" ]]; then
       run_compose down
-      run_compose up -d
-      run_compose ps
     else
-      # Restart specific services by recreating them
       ${COMPOSE_BIN} stop ${SERVICES}
       ${COMPOSE_BIN} rm -f ${SERVICES}
-      run_compose up -d
-      run_compose ps ${SERVICES}
     fi
+    if ! start_bridge; then
+      exit 1
+    fi
+    ensure_ws_endpoint || true
+    run_compose up -d
+    run_compose ps
     ;;
   status)
     if [[ -z "${SERVICES}" ]]; then

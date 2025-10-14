@@ -1,12 +1,17 @@
 #include <Arduino.h>
 #include <cstring>
 #include <ctype.h>
+#include "camera_http.hpp"
+#include "cli_handler.hpp"
+#include "cli_ws.hpp"
 #include "config.hpp"
-#include "shelf_map.hpp"
+#include "log_sink.hpp"
 #include "i2c_link.hpp"
+#include "shelf_map.hpp"
 #include "vision_color.hpp"
 #include "wifi_link.hpp"
-#include "camera_http.hpp"
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 enum BTState { ST_INIT, ST_PICK, ST_GOPLACE, ST_PLACE };
 BTState st = ST_INIT;
@@ -15,29 +20,37 @@ uint32_t t_state_ms = 0;
 static bool g_uno_ready = false;
 
 static void process_cli(Stream& io);
+static void cli_execute_unlocked(const String& command, Stream& io);
 static void cli_print_status(Stream& io);
 static void cli_print_camcfg(Stream& io);
 static uint32_t g_last_uno_check_ms = 0;
+static SemaphoreHandle_t g_cli_mutex = nullptr;
 
 void setup(){
   Serial.begin(115200);
   delay(1000);
-  Serial.println("[ESP32] Boot");
+  log_sink_init();
+  log_line("[ESP32] Boot");
+  g_cli_mutex = xSemaphoreCreateMutex();
+  if(!g_cli_mutex){
+    log_line("[CLI] mutex allocation failed");
+  }
   wifi_init();
+  cli_ws_init();
   camera_http_init();
   // I2C
   i2c_init();
   g_uno_ready = i2c_ping_uno();
   if(!g_uno_ready){
-    Serial.println("[ESP32] UNO not responding; automation disabled");
+    log_line("[ESP32] UNO not responding; automation disabled");
   }
   g_last_uno_check_ms = millis();
   // Camera
-  if(!cam_init()) Serial.println("[ESP32] Camera init FAILED");
+  if(!cam_init()) log_line("[ESP32] Camera init FAILED");
   camera_http_sync_sensor();
   // Shelf map
   if(!gShelf.loadNVS()){ gShelf.setDefault(); gShelf.saveNVS(); }
-  Serial.print("[ESP32] SHELF_MAP: "); Serial.println(gShelf.toString());
+  logf("[ESP32] SHELF_MAP: %s", gShelf.toString().c_str());
   // Example configs
   if(g_uno_ready){
     i2c_cfg_line(0); // auto
@@ -59,10 +72,11 @@ static void drive_ms(int16_t vx,int16_t vy,int16_t w,int16_t t){
 }
 
 void loop(){
+  cli_ws_tick();
+  wifi_tick();
   int loopAvail = Serial.available();
   if(loopAvail){
-    Serial.print("[LOOP] available=");
-    Serial.println(loopAvail);
+    logf("[LOOP] available=%d", loopAvail);
   }
   process_cli(Serial);
 
@@ -70,7 +84,7 @@ void loop(){
     g_uno_ready = i2c_ping_uno();
     g_last_uno_check_ms = millis();
     if(g_uno_ready){
-      Serial.println("[ESP32] UNO link restored");
+        log_line("[ESP32] UNO link restored");
     }
   }
 
@@ -80,7 +94,7 @@ void loop(){
     case ST_INIT:{
       // Homing subsystems
       if(!i2c_cmd_home()){
-        Serial.println("[BT] UNO busy during HOME; disabling automation");
+          log_line("[BT] UNO busy during HOME; disabling automation");
         g_uno_ready = false;
         g_last_uno_check_ms = millis();
         break;
@@ -91,14 +105,14 @@ void loop(){
     case ST_PICK:{
       // Go to conveyor (placeholder: straight for 500ms)
       if(!i2c_cmd_drive(200,0,0,500)){
-        Serial.println("[BT] DRIVE failed; disabling automation");
+          log_line("[BT] DRIVE failed; disabling automation");
         g_uno_ready = false;
         g_last_uno_check_ms = millis();
         break;
       }
       // Detect color
       current_pick = detect_cylinder_color();
-      Serial.print("[BT] Detected color: "); Serial.println((int)current_pick);
+        logf("[BT] Detected color: %d", static_cast<int>(current_pick));
       // Close grip and lift to carry height (example 120mm)
       i2c_cmd_grip(1 /*CLOSE*/, 0);
       i2c_cmd_elev(120, 100, 0);
@@ -108,7 +122,7 @@ void loop(){
     case ST_GOPLACE:{
       // In a real run we would pathfind by A* and line-follow; here we simulate forward drive
       if(!i2c_cmd_drive(200,0,0,800)){
-        Serial.println("[BT] DRIVE (place) failed; disabling automation");
+          log_line("[BT] DRIVE (place) failed; disabling automation");
         g_uno_ready = false;
         g_last_uno_check_ms = millis();
         break;
@@ -141,11 +155,17 @@ void loop(){
     if(g_uno_ready){
       Status0 s0; Odom od; Lines ln;
       if(read_STATUS0(s0) && read_ODOM(od) && read_LINES(ln)){
-        Serial.printf("[TLM] st=%u err=0x%04X ODO(L=%ld R=%ld) L=%u R=%u\n",
-          s0.state_id, s0.err_flags, (long)od.L, (long)od.R, ln.L, ln.R);
+          logf("[TLM] st=%u err=0x%04X ODO(L=%ld R=%ld) L=%u R=%u",
+            s0.state_id,
+            s0.err_flags,
+            static_cast<long>(od.L),
+            static_cast<long>(od.R),
+            ln.L,
+            ln.R
+          );
       }
     }else{
-      Serial.println("[TLM] UNO offline");
+        log_line("[TLM] UNO offline");
     }
     tPrint = millis();
   }
@@ -154,34 +174,35 @@ void loop(){
 static void process_cli(Stream& io){
   int available = io.available();
   if(!available) return;
-  Serial.print("[CLI] available=");
-  Serial.println(available);
+  logf("[CLI] available=%d", available);
   String cmd = io.readStringUntil('\n');
   cmd.trim();
   if(!cmd.length()) return;
 
-  Serial.print("[CLI] RX: ");
-  Serial.println(cmd);
+  logf("[CLI] RX: %s", cmd.c_str());
+  cli_handle_command(cmd, io);
+}
 
-  if(shelf_cli_handle(cmd, io)){
+static void cli_execute_unlocked(const String& command, Stream& io){
+  if(shelf_cli_handle(command, io)){
     return;
   }
 
-  String upper = cmd;
+  String upper = command;
   upper.toUpperCase();
 
   if(upper == "STATUS"){
     cli_print_status(io);
-    Serial.println("[CLI] status handled");
+    log_line("[CLI] status handled");
     return;
   }
 
   if(upper.startsWith("CAMCFG")){
-    String args = cmd.substring(strlen("CAMCFG"));
+    String args = command.substring(strlen("CAMCFG"));
     args.trim();
     if(args.equalsIgnoreCase("?") || args.equalsIgnoreCase("INFO") || args.length() == 0){
       cli_print_camcfg(io);
-      Serial.println("[CLI] camcfg handled");
+      log_line("[CLI] camcfg handled");
       return;
     }
 
@@ -253,7 +274,7 @@ static void process_cli(Stream& io){
 
     if(error){
       io.printf("camcfg_error=%s\n", errorCode.c_str());
-      Serial.println("[CLI] camcfg error");
+      log_line("[CLI] camcfg error");
       return;
     }
 
@@ -262,13 +283,13 @@ static void process_cli(Stream& io){
     }
 
     cli_print_camcfg(io);
-    Serial.println("[CLI] camcfg handled");
+    log_line("[CLI] camcfg handled");
     return;
   }
 
   if(upper == "BRAKE"){
     io.println(go_brake() ? "BRAKE=OK" : "BRAKE=FAIL");
-    Serial.println("[CLI] brake handled");
+    log_line("[CLI] brake handled");
     return;
   }
 
@@ -284,7 +305,68 @@ static void process_cli(Stream& io){
     }else{
       io.printf("CAMSTREAM=%s\n", camera_http_is_running() ? "ON" : "OFF");
     }
-    Serial.println("[CLI] camstream handled");
+    log_line("[CLI] camstream handled");
+    return;
+  }
+
+  if(upper.startsWith("LOGS")){
+    String args = command.substring(strlen("LOGS"));
+    args.trim();
+    uint32_t since = 0;
+    size_t limit = 64;
+    bool error = false;
+
+    if(args.length()){
+      args.replace(',', ' ');
+      int start = 0;
+      while(start < args.length()){
+        int end = args.indexOf(' ', start);
+        if(end < 0) end = args.length();
+        String token = args.substring(start, end);
+        token.trim();
+        if(token.length()){
+          int eq = token.indexOf('=');
+          if(eq < 0){
+            error = true;
+            break;
+          }
+          String key = token.substring(0, eq);
+          String value = token.substring(eq + 1);
+          key.trim();
+          value.trim();
+          key.toUpperCase();
+          if(key == "SINCE"){
+            since = static_cast<uint32_t>(value.toInt());
+          }else if(key == "LIMIT"){
+            long parsed = value.toInt();
+            if(parsed <= 0){
+              error = true;
+              break;
+            }
+            limit = static_cast<size_t>(parsed);
+          }else{
+            error = true;
+            break;
+          }
+        }
+        start = end + 1;
+      }
+    }
+
+    if(error){
+      io.println("logs_error=SYNTAX");
+      log_line("[CLI] logs error");
+      return;
+    }
+
+    LogDumpResult dump = log_dump(io, since, limit);
+    logf(
+      "[CLI] logs handled since=%lu limit=%u count=%u truncated=%u",
+      static_cast<unsigned long>(since),
+      static_cast<unsigned>(limit),
+      static_cast<unsigned>(dump.count),
+      dump.truncated ? 1U : 0U
+    );
     return;
   }
 
@@ -293,7 +375,7 @@ static void process_cli(Stream& io){
       st = ST_PICK;
       if(!g_uno_ready){
         io.println("START=UNO_OFFLINE");
-        Serial.println("[CLI] start aborted (UNO offline)");
+        log_line("[CLI] start aborted (UNO offline)");
         return;
       }
       t_state_ms = millis();
@@ -302,16 +384,16 @@ static void process_cli(Stream& io){
         camera_http_stop();
       }
       io.println("START=OK");
-      Serial.println("[CLI] start handled");
+      log_line("[CLI] start handled");
     }else{
       io.println("START=FAIL");
-      Serial.println("[CLI] start failed");
+      log_line("[CLI] start failed");
     }
     return;
   }
 
   io.println("ERR UNKNOWN_CMD");
-  Serial.println("[CLI] unknown command");
+  log_line("[CLI] unknown command");
 }
 
 static void cli_print_status(Stream& io){
@@ -404,4 +486,61 @@ static void cli_print_camcfg(Stream& io){
     maxName = "UNKNOWN";
   }
   io.printf("cam_resolution=%s cam_quality=%u cam_max=%s\n", name, cfg.jpeg_quality, maxName);
+}
+
+namespace {
+
+class BufferStream : public Stream {
+ public:
+  BufferStream() = default;
+
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+
+  size_t write(uint8_t value) override {
+    buffer_ += static_cast<char>(value);
+    return 1;
+  }
+
+  size_t write(const uint8_t* data, size_t size) override {
+    for(size_t i = 0; i < size; ++i){
+      buffer_ += static_cast<char>(data[i]);
+    }
+    return size;
+  }
+
+  const String& data() const { return buffer_; }
+
+ private:
+  String buffer_;
+};
+
+}  // namespace
+
+void cli_handle_command(const String& command, Stream& output){
+  if(!command.length()){
+    return;
+  }
+
+  if(!g_cli_mutex){
+    cli_execute_unlocked(command, output);
+    return;
+  }
+
+  if(xSemaphoreTake(g_cli_mutex, pdMS_TO_TICKS(2000)) != pdTRUE){
+    output.println("ERR CLI_LOCK_TIMEOUT");
+  log_line("[CLI] mutex timeout");
+    return;
+  }
+
+  cli_execute_unlocked(command, output);
+  xSemaphoreGive(g_cli_mutex);
+}
+
+String cli_handle_command_capture(const String& command){
+  BufferStream buffer;
+  cli_handle_command(command, buffer);
+  return buffer.data();
 }

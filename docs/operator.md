@@ -140,7 +140,33 @@ brew install socat  # macOS
 ./scripts/operator_stack_docker.sh stop     # остановить и удалить
 ```
 
-## 8. Частые проблемы
+## 8. Управление по Wi‑Fi (WebSocket CLI)
+
+Прошивка ESP32 поднимает WebSocket-сервер на `ws://<ip-адрес-esp32>:81/ws/cli`, который повторяет UART CLI. Можно переключить backend и CLI на управление по Wi‑Fi:
+
+1. Убедитесь, что ESP32 подключена к Wi‑Fi и доступна по имени/адресу (например `esp32.local`).
+2. Задайте переменные окружения (подходит как для `rbm-operator-server`, так и для CLI). Backend в режиме `auto` сам переходит на Wi‑Fi, как только получит IP из телеметрии, поэтому `OPERATOR_WS_ENDPOINT` можно не указывать, если CLI/сервер работают в той же сети:
+
+   ```bash
+   export OPERATOR_CONTROL_TRANSPORT=auto   # или ws для принудительного режима
+   export OPERATOR_WS_ENDPOINT=ws://esp32.local:81/ws/cli   # опционально, можно пропустить
+   ```
+
+3. Для CLI доступны явные параметры:
+
+   ```bash
+   rbm-operator status --transport ws --ws-endpoint ws://esp32.local:81/ws/cli
+   rbm-operator command "CAMSTREAM ON" --transport ws --ws-endpoint ws://esp32.local:81/ws/cli
+   rbm-operator command "LOGS since=0 limit=50" --transport ws --ws-endpoint ws://esp32.local:81/ws/cli
+   ```
+
+   При выборе `--transport ws` параметры `--port`/`--baudrate` игнорируются.
+
+4. Для backend/web UI достаточно экспортировать переменные перед запуском `rbm-operator-server` либо добавить их в `.env` (перечитывается `scripts/operator_stack.sh`).
+
+> Примечание: прошивка зеркалирует все логи в кольцевой буфер и отдаёт их через команду `LOGS`. Backend автоматически подхватывает эти данные и продолжает стрим `/ws/logs`, даже если USB отключён.
+
+## 9. Частые проблемы
 
 - **Не найден порт** — укажите `--port` и убедитесь в установке драйверов CP210/CH340.
 - **Docker не видит ESP32** — пробросьте устройство (`--device /dev/ttyUSB0`) или поднимите TCP-мост (см. пример с `socat`) и настройте `OPERATOR_SERIAL_PORT`.
@@ -148,7 +174,7 @@ brew install socat  # macOS
 - **WebSocket не подключается** — проверьте, что backend слушает порт 8000, а брандмауэр не блокирует localhost.
 - **Пустые метрики** — CLI должен выводить пары `ключ=значение`. Настройте прошивку или адаптируйте `METRIC_CONFIG` в `frontend/web/src/constants.js`.
 
-## 9. Автоматизация тестов и pre-commit
+## 10. Автоматизация тестов и pre-commit
 
 1. Сделайте скрипты исполняемыми и укажите путь к локальным хукам:
 

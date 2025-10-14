@@ -48,6 +48,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
   gap: 2rem;
 }
 
@@ -61,6 +62,52 @@ body {
   align-items: center;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.transport-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid var(--color-border);
+  background: rgba(11, 114, 133, 0.12);
+  color: var(--color-primary);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.transport-badge.online {
+  background: rgba(22, 163, 74, 0.18);
+  border-color: rgba(22, 163, 74, 0.35);
+  color: var(--color-success);
+}
+
+.transport-badge.offline {
+  background: rgba(213, 57, 57, 0.15);
+  border-color: rgba(213, 57, 57, 0.25);
+  color: var(--color-danger);
+}
+
+.transport-badge.active {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px rgba(11, 114, 133, 0.2);
+}
+
+.transport-badge .badge-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .status-indicator {
   display: flex;
   align-items: center;
@@ -72,6 +119,10 @@ body {
   font-weight: 500;
 }
 
+.status-indicator.status-with-select {
+  gap: 0.75rem;
+}
+
 .status-dot {
   width: 10px;
   height: 10px;
@@ -79,6 +130,55 @@ body {
   background: var(--color-warning);
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+.status-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.status-content .status-text {
+  font-size: 0.85rem;
+  line-height: 1.2;
+}
+
+.status-control {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+}
+
+.status-control-label {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.status-with-select select {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  padding: 0.35rem 2.1rem 0.35rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  min-width: 160px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.status-with-select select:focus {
+  outline: none;
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.status-with-select select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 
 .status-indicator.connected .status-dot {
   background: var(--color-success);
@@ -424,6 +524,134 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.transport-settings-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+
+.transport-summary-card {
+  background: rgba(11, 114, 133, 0.05);
+  border: 1px solid rgba(11, 114, 133, 0.1);
+  border-radius: var(--radius-md);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.summary-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.summary-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.summary-subtle {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.transport-summary-card.summary-actions {
+  justify-content: center;
+  align-items: flex-end;
+}
+
+.transport-status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.transport-status-item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--color-surface);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.transport-status-item[data-active="true"] {
+  border-color: rgba(11, 114, 133, 0.35);
+  box-shadow: 0 6px 20px -10px rgba(11, 114, 133, 0.55);
+}
+
+.transport-status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.transport-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--color-text);
+}
+
+.transport-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.transport-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.transport-settings-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.transport-status-item.empty {
+  border-style: dashed;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.settings-card .transport-badge {
+  background: rgba(11, 114, 133, 0.08);
+  border-color: rgba(11, 114, 133, 0.2);
+  color: var(--color-primary);
+}
+
+.settings-card .transport-badge.online {
+  background: rgba(22, 163, 74, 0.14);
+  border-color: rgba(22, 163, 74, 0.25);
+  color: var(--color-success);
+}
+
+.settings-card .transport-badge.offline {
+  background: rgba(213, 57, 57, 0.14);
+  border-color: rgba(213, 57, 57, 0.28);
+  color: var(--color-danger);
+}
+
+.settings-card .transport-badge.active {
+  border-color: rgba(11, 114, 133, 0.5);
+  box-shadow: 0 0 0 1px rgba(11, 114, 133, 0.15);
 }
 
 .settings-card header h3 {
