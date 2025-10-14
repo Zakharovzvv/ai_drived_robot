@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useOperator } from "../state/OperatorProvider.jsx";
 
 function computeStatus(headerStatus) {
@@ -41,17 +41,58 @@ function computeStatus(headerStatus) {
 }
 
 export default function Header() {
-  const { headerStatus } = useOperator();
+  const { headerStatus, controlState, controlModePending, changeControlTransport } = useOperator();
   const status = useMemo(() => computeStatus(headerStatus), [headerStatus]);
+  const transports = controlState?.transports ?? [];
+  const activeMode = controlState?.mode ?? "auto";
+
+  const selectorOptions = useMemo(() => {
+    const options = [
+      { value: "auto", label: "Auto (Wi-Fi -> UART)" },
+      ...transports.map((transport) => ({
+        value: transport.id,
+        label: `${transport.label || transport.id.toUpperCase()}${transport.available ? "" : " (offline)"}`,
+      })),
+    ];
+    return options;
+  }, [transports]);
+
+  const handleModeChange = useCallback(
+    (event) => {
+      const value = event.target.value;
+      changeControlTransport(value).catch(() => {});
+    },
+    [changeControlTransport]
+  );
 
   return (
     <header className="header-compact">
       <div className="header-content">
         <h1>RBM Operator Console</h1>
         <div className="connection-status">
-          <span className={status.className} aria-live="polite">
+          <span className={`${status.className} status-with-select`} aria-live="polite">
             <span className="status-dot" role="img" aria-label="Connection status" />
-            <span className="status-text">{status.text}</span>
+            <div className="status-content">
+              <span className="sr-only">{status.text}</span>
+              <div className="status-control">
+                <span className="status-control-label">Control:</span>
+                <label className="sr-only" htmlFor="control-transport-select">
+                  Select control transport
+                </label>
+                <select
+                  id="control-transport-select"
+                  value={activeMode}
+                  onChange={handleModeChange}
+                  disabled={controlModePending || selectorOptions.length <= 1}
+                >
+                  {selectorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </span>
         </div>
       </div>

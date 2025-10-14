@@ -12,10 +12,12 @@ from ..models.api import (
     CameraConfigUpdate,
     CommandRequest,
     CommandResponse,
+    ControlState,
     ServiceInfo,
     ShelfMapResetRequest,
     ShelfMapResponse,
     ShelfMapUpdateRequest,
+    ControlTransportUpdate,
 )
 from ..services.operator_service import (
     CameraNotConfiguredError,
@@ -168,6 +170,23 @@ async def api_shelf_map_reset(
 @router.get("/api/info", response_model=ServiceInfo)
 async def api_info(svc: OperatorService = Depends(get_service)) -> ServiceInfo:
     return ServiceInfo(**svc.describe())
+
+
+@router.get("/api/control/transport", response_model=ControlState)
+async def api_control_transport(svc: OperatorService = Depends(get_service)) -> ControlState:
+    return ControlState(**svc.get_control_state())
+
+
+@router.post("/api/control/transport", response_model=ControlState)
+async def api_control_transport_update(
+    request: ControlTransportUpdate,
+    svc: OperatorService = Depends(get_service),
+) -> ControlState:
+    try:
+        state = await svc.set_control_mode(request.mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ControlState(**state)
 
 
 @router.get("/api/logs")

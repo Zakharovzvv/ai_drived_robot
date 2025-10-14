@@ -1,14 +1,12 @@
 #pragma once
 // ====== ESP32-S3 Master Config (pins, ICD addresses, thresholds) ======
 
-#include <cstdint>
-
-// WiFi credentials (override via build flags: -DWIFI_SSID="myssid" -DWIFI_PASSWORD="pass")
+// WiFi credentials must be supplied via build flags (see platformio.ini)
 #ifndef WIFI_SSID
-#define WIFI_SSID "fsd-robot"
+#error "WIFI_SSID is not defined; configure it via platformio.ini build_flags"
 #endif
 #ifndef WIFI_PASSWORD
-#define WIFI_PASSWORD "248016"
+#error "WIFI_PASSWORD is not defined; configure it via platformio.ini build_flags"
 #endif
 
 // I2C to UNO

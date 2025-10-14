@@ -1,5 +1,6 @@
 #include "camera_http.hpp"
 #include "config.hpp"
+#include "log_sink.hpp"
 #include "wifi_link.hpp"
 
 #include <Arduino.h>
@@ -98,7 +99,7 @@ esp_err_t snapshot_handler(httpd_req_t* req) {
   char size_hdr[64];
   snprintf(size_hdr, sizeof(size_hdr), "%ux%u", fb->width, fb->height);
   httpd_resp_set_hdr(req, "X-Frame-Size", size_hdr);
-  Serial.printf("[CameraHTTP] Serving snapshot %ux%u, len=%u\n", fb->width, fb->height, (unsigned)jpg_len);
+  logf("[CameraHTTP] Serving snapshot %ux%u, len=%u", fb->width, fb->height, static_cast<unsigned>(jpg_len));
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
   httpd_resp_set_hdr(req, "Pragma", "no-cache");
   httpd_resp_set_hdr(req, "Expires", "0");
@@ -146,7 +147,7 @@ bool camera_http_start() {
   }
 
   if (!wifi_is_connected()) {
-    Serial.println("[CameraHTTP] WiFi not connected; cannot start server");
+    log_line("[CameraHTTP] WiFi not connected; cannot start server");
     return false;
   }
 
@@ -158,7 +159,7 @@ bool camera_http_start() {
 
   esp_err_t err = httpd_start(&s_httpd, &config);
   if (err != ESP_OK) {
-    Serial.printf("[CameraHTTP] httpd_start failed: 0x%x\n", static_cast<unsigned>(err));
+    logf("[CameraHTTP] httpd_start failed: 0x%x", static_cast<unsigned>(err));
     s_httpd = nullptr;
     return false;
   }
@@ -166,12 +167,12 @@ bool camera_http_start() {
   httpd_uri_t snapshot_uri = snapshot_uri_config();
   err = httpd_register_uri_handler(s_httpd, &snapshot_uri);
   if (err != ESP_OK) {
-    Serial.printf("[CameraHTTP] register snapshot handler failed: 0x%x\n", static_cast<unsigned>(err));
+    logf("[CameraHTTP] register snapshot handler failed: 0x%x", static_cast<unsigned>(err));
     camera_http_stop();
     return false;
   }
 
-  Serial.println("[CameraHTTP] HTTP snapshot server started");
+  log_line("[CameraHTTP] HTTP snapshot server started");
   return true;
 }
 
@@ -179,7 +180,7 @@ void camera_http_stop() {
   if (s_httpd) {
     httpd_stop(s_httpd);
     s_httpd = nullptr;
-    Serial.println("[CameraHTTP] HTTP snapshot server stopped");
+    log_line("[CameraHTTP] HTTP snapshot server stopped");
   }
 }
 

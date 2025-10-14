@@ -57,6 +57,10 @@ class ShelfMapResetRequest(BaseModel):
 
 class ServiceInfo(BaseModel):
     serial_port: Optional[str]
+    control_mode: str
+    control_transport: Optional[str]
+    control_endpoint: Optional[str]
+    available_transports: List["TransportDescriptor"]
     camera_snapshot_url: Optional[str]
     camera_snapshot_source: str
     camera_transport: str
@@ -64,14 +68,40 @@ class ServiceInfo(BaseModel):
     status_fresh: bool
 
 
+class ControlTransportUpdate(BaseModel):
+    mode: str
+
+
+class TransportDescriptor(BaseModel):
+    id: str
+    label: str
+    endpoint: Optional[str] = None
+    available: bool = False
+    last_error: Optional[str] = None
+    last_success: Optional[float] = None
+    last_failure: Optional[float] = None
+
+
+class ControlState(BaseModel):
+    mode: str
+    active: Optional[str]
+    transports: List[TransportDescriptor]
+
+
 __all__ = [
     "CameraConfigResponse",
     "CameraConfigUpdate",
     "CommandRequest",
     "CommandResponse",
-    "ServiceInfo",
+    "ControlState",
+    "ControlTransportUpdate",
     "ShelfMapPaletteEntry",
     "ShelfMapResetRequest",
     "ShelfMapResponse",
     "ShelfMapUpdateRequest",
+    "ServiceInfo",
+    "TransportDescriptor",
 ]
+
+ServiceInfo.model_rebuild()
+ControlState.model_rebuild()

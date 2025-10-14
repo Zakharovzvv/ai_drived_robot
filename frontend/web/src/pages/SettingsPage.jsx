@@ -1,6 +1,182 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOperator } from "../state/OperatorProvider.jsx";
 import { createEmptyShelfGrid, validateShelfGrid } from "../shelfMap.js";
+
+const CONTROL_MODE_LABEL = {
+  auto: "Auto (Wi-Fi -> UART)",
+};
+
+function resolveModeLabel(mode, transports) {
+  if (!mode) {
+    return CONTROL_MODE_LABEL.auto;
+  }
+  const normalized = mode.toString().trim().toLowerCase();
+  if (normalized === "auto") {
+    return CONTROL_MODE_LABEL.auto;
+  }
+  const match = transports.find((entry) => entry.id === normalized);
+  if (match?.label) {
+    return match.label;
+  }
+  return normalized.toUpperCase();
+}
+
+function formatTimestamp(value) {
+  if (!value) {
+    return "—";
+  }
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return `${parsed.toLocaleDateString()} ${parsed.toLocaleTimeString()}`;
+    }
+  }
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) {
+    return "—";
+  }
+  const milliseconds = numeric > 1e12 ? numeric : numeric * 1000;
+  const date = new Date(milliseconds);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+}
+
+function ControlTransportSettings() {
+  const { controlState, controlModePending, changeControlTransport, fetchControlState } = useOperator();
+  const transports = controlState?.transports ?? [];
+  const activeMode = controlState?.mode ?? "auto";
+  const activeTransport = transports.find((entry) => entry.id === controlState?.active) || null;
+  const preferredLabel = useMemo(() => resolveModeLabel(activeMode, transports), [activeMode, transports]);
+  const autoBadgeClass = useMemo(() => {
+    const classes = ["transport-badge"];
+    if (activeMode === "auto") {
+      classes.push("active");
+    }
+    return classes.join(" ");
+  }, [activeMode]);
+
+  const handleRefresh = useCallback(() => {
+    fetchControlState({ silent: false }).catch(() => {});
+  }, [fetchControlState]);
+
+  const handleSwitch = useCallback(
+    (target) => {
+      changeControlTransport(target).catch(() => {});
+    },
+    [changeControlTransport]
+  );
+
+  return (
+    <article className="settings-card" data-device="control-link">
+      <header>
+        <h3>Control Link</h3>
+        <p>Manage Wi-Fi and UART command channels for the robot.</p>
+      </header>
+      <div className="transport-settings-summary">
+        <div className="transport-summary-card">
+          <span className="summary-label">Preferred Mode</span>
+          <span className="summary-value">{preferredLabel}</span>
+        </div>
+        <div className="transport-summary-card">
+          <span className="summary-label">Active Channel</span>
+          <span className="summary-value">{activeTransport ? activeTransport.label : "Pending"}</span>
+          {activeTransport?.endpoint ? (
+            <span className="summary-subtle">{activeTransport.endpoint}</span>
+          ) : null}
+        </div>
+        <div className="transport-summary-card summary-actions">
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={handleRefresh}
+            disabled={controlModePending}
+          >
+            {controlModePending ? "Checking..." : "Refresh Status"}
+          </button>
+        </div>
+      </div>
+      <ul className="transport-status-list">
+        <li className="transport-status-item" data-active={activeMode === "auto"}>
+          <div className="transport-status-header">
+            <div>
+              <span className="transport-name">Automatic Selection</span>
+              <span className={autoBadgeClass}>
+                Prefers Wi-Fi, falls back to UART
+              </span>
+            </div>
+            <div className="transport-actions">
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={() => handleSwitch("auto")}
+                disabled={controlModePending || activeMode === "auto"}
+              >
+                {activeMode === "auto" ? "Selected" : "Use Auto"}
+              </button>
+            </div>
+          </div>
+          <div className="transport-meta">
+            <span>Attempts Wi-Fi first, then retries via UART if needed.</span>
+          </div>
+        </li>
+        {transports.map((transport) => {
+          const meta = [];
+          if (transport.endpoint) {
+            meta.push(`Endpoint: ${transport.endpoint}`);
+          }
+          meta.push(`Last success: ${formatTimestamp(transport.last_success)}`);
+          if (transport.last_failure) {
+            meta.push(`Last failure: ${formatTimestamp(transport.last_failure)}`);
+          }
+          const classes = [
+            "transport-badge",
+            transport.available ? "online" : "offline",
+            transport.id === activeTransport?.id ? "active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          return (
+            <li key={transport.id} className="transport-status-item" data-active={transport.id === activeTransport?.id}>
+              <div className="transport-status-header">
+                <div>
+                  <span className="transport-name">{transport.label || transport.id.toUpperCase()}</span>
+                  <span className={classes}>
+                    <span className="badge-dot" />
+                    {transport.available ? "Online" : "Unavailable"}
+                  </span>
+                </div>
+                <div className="transport-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    onClick={() => handleSwitch(transport.id)}
+                    disabled={controlModePending || activeMode === transport.id}
+                  >
+                    {activeMode === transport.id ? "Selected" : `Use ${transport.label || transport.id.toUpperCase()}`}
+                  </button>
+                </div>
+              </div>
+              <div className="transport-meta">
+                {meta.map((entry) => (
+                  <span key={entry}>{entry}</span>
+                ))}
+              </div>
+            </li>
+          );
+        })}
+        {transports.length === 0 ? (
+          <li className="transport-status-item empty">Transport details are not available yet.</li>
+        ) : null}
+      </ul>
+      <p className="transport-settings-hint">
+        Switch the preferred transport from the header or by using the buttons above. Manual overrides trigger a
+        new health check immediately.
+      </p>
+    </article>
+  );
+}
 
 function CameraSettings() {
   const {
@@ -298,6 +474,7 @@ export default function SettingsPage() {
         <h2>System Settings</h2>
       </div>
       <div className="settings-grid">
+        <ControlTransportSettings />
         <CameraSettings />
         <ShelfMapSettings />
         <article className="settings-card" data-device="esp32">
