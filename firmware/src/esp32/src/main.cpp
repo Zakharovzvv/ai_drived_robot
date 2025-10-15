@@ -406,6 +406,7 @@ static void cli_print_status(Stream& io){
   Power pw{};
   DriveFB drv{};
   AuxFB aux{};
+  Sens sns{};
   Odom od{};
 
   String err;
@@ -421,16 +422,19 @@ static void cli_print_status(Stream& io){
     bool okPower = read_POWER(pw);
     bool okDrive = read_DRIVEFB(drv);
     bool okAux = read_AUXFB(aux);
+    bool okSens = read_SENS(sns);
     bool okOdom = read_ODOM(od);
 
     if(!ok0) appendErr("STATUS0");
     if(!ok1) appendErr("STATUS1");
     if(!okLines) appendErr("LINES");
     if(!okPower) appendErr("POWER");
+    if(!okSens) appendErr("SENS");
     if(!okOdom) appendErr("ODOM");
 
     if(!okDrive) memset(&drv, 0, sizeof(drv));
     if(!okAux) memset(&aux, 0, sizeof(aux));
+    if(!okSens) memset(&sns, 0, sizeof(sns));
   }else{
     appendErr("UNO_MISSING");
     memset(&s0, 0, sizeof(s0));
@@ -439,6 +443,7 @@ static void cli_print_status(Stream& io){
     memset(&pw, 0, sizeof(pw));
     memset(&drv, 0, sizeof(drv));
     memset(&aux, 0, sizeof(aux));
+    memset(&sns, 0, sizeof(sns));
     memset(&od, 0, sizeof(od));
   }
 
@@ -451,7 +456,7 @@ static void cli_print_status(Stream& io){
   }
 
   io.printf(
-    "state_id=%u seq_ack=%u err_flags=0x%04X elev_mm=%d grip_deg=%d line_left=%u line_right=%u line_thr=%u vbatt_mV=%u mps=%u estop=%u drive_fl=%u drive_fr=%u drive_rl=%u drive_rr=%u aux_lift=%u aux_grip=%u odo_left=%ld odo_right=%ld wifi_connected=%s wifi_ip=%s cam_streaming=%s\n",
+    "state_id=%u seq_ack=%u err_flags=0x%04X elev_mm=%d grip_deg=%d line_left=%u line_right=%u line_thr=%u vbatt_mV=%u mps=%u estop=%u drive_left=%u drive_right=%u drive_res1=%u drive_res2=%u aux_lift=%u aux_grip=%u grip_enc=%d lift_enc=%d odo_left=%ld odo_right=%ld wifi_connected=%s wifi_ip=%s cam_streaming=%s\n",
     s0.state_id,
     s0.seq_ack,
     s0.err_flags,
@@ -463,12 +468,14 @@ static void cli_print_status(Stream& io){
     pw.vbatt_mV,
     pw.mps,
     pw.estop,
-    drv.fl,
-    drv.fr,
-    drv.rl,
-    drv.rr,
+    drv.left_us,
+    drv.right_us,
+    drv.res1,
+    drv.res2,
     aux.lift,
     aux.grip,
+    sns.grip_enc_cnt,
+    sns.lift_enc_cnt,
     (long)od.L,
     (long)od.R,
     wifiConnected ? "true" : "false",

@@ -1,5 +1,17 @@
 # Changelog
 
+## [2025-10-15]
+
+### Documentation & Architecture
+
+- Updated mechanical documentation (`docs/RBM-Robot_Architecture.md`, `docs/wire.md`, `docs/ICD — Протокол обмена ESP32↔UNO.md`) to reflect the dual-motor drive base, gripper encoder, refreshed camera mounting and the component-to-element mapping table.
+- Cross-referenced wiring/architecture revisions and clarified ICD telemetry for the new encoder layout and reserved `vy` field in `DRIVE`.
+
+### Firmware & Telemetry
+
+- Arduino UNO firmware (`firmware/src/uno/main.cpp`) reworked for the dual-drive base: new motor pin map, quadrature gripper encoder capture, lift/grip safety limits, and telemetry packing that matches ICD v0.3.
+- ESP32 firmware (`firmware/src/esp32/include/i2c_link.hpp`, `.../i2c_link.cpp`, `.../main.cpp`, `.../config.hpp`) updated to the same protocol: revised drive feedback fields, grip configuration writer, STATUS output with encoder counts, and lint fixes in the CLI telemetry formatting.
+
 ## [2025-10-14]
 
 ### Added (2025-10-14)

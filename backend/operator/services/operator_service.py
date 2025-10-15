@@ -222,6 +222,7 @@ class OperatorService:
         self._shelf_cache: Optional[Dict[str, Any]] = None
         self._shelf_cache_timestamp: Optional[float] = None
         self._shelf_cache_ttl = 1.0
+        self._cached_camera_max_resolution = None
 
     def _configure_wifi_transport(self, endpoint: str, timeout: float) -> bool:
         try:
@@ -599,6 +600,8 @@ class OperatorService:
         resolution = str(data.get("cam_resolution") or "").upper()
         quality = data.get("cam_quality")
         max_resolution = str(data.get("cam_max") or "").upper()
+        if max_resolution:
+            self._cached_camera_max_resolution = max_resolution
         if not resolution:
             resolution = "UNKNOWN"
         try:
@@ -673,10 +676,25 @@ class OperatorService:
             try:
                 snapshot = await self.camera_get_config()
                 max_supported = snapshot.get("max_resolution")
+                if max_supported:
+                    self._cached_camera_max_resolution = max_supported
+                if not max_supported:
+                    for option in reversed(snapshot.get("available_resolutions") or []):
+                        if option.get("supported") and option.get("id"):
+                            max_supported = str(option["id"]).upper()
+                            break
             except SerialNotFoundError:
                 pass
             except Exception:  # pragma: no cover - defensive logging
                 logger.debug("Failed to refresh camera config after CAMCFG error", exc_info=True)
+
+            if not max_supported and self._cached_camera_max_resolution:
+                max_supported = self._cached_camera_max_resolution
+            if not max_supported:
+                for option in self._camera_resolution_options:
+                    if option.get("id") == "QVGA":
+                        max_supported = "QVGA"
+                        break
 
             message_parts: List[str] = []
             if requested_resolution:

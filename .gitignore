@@ -22,3 +22,4 @@ frontend/web/node_modules/
 
 # Logs and misc
 *.log
+/docs/robot-photos

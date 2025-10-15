@@ -131,6 +131,13 @@
 - [x] Дополнить тесты backend (юнит/интеграционные) для новой структуры, обеспечить запуск через `pytest` и существующие CLI проверки. — добавлены интеграционные тесты FastAPI маршрутов с заглушкой `OperatorService`, `pytest` покрывает базовые сценарии.
 - [x] Обновить документацию (`docs/operator.md`, README) по новой структуре backend и инструкциям запуска. — `docs/operator.md` дополнен описанием пакетов `api/`, `services/`, `models/`.
 
+### 16. Drive Base Hardware Update (2025-10-15)
+
+- [x] Обновить `docs/RBM-Robot_Architecture.md` под двухмоторное шасси, энкодер захвата и новую позицию камеры.
+- [x] Актуализировать `docs/wire.md`: силовые цепи, распиновка UNO, smoke-test для энкодера захвата.
+- [x] Переписать `docs/ICD — Протокол обмена ESP32↔UNO.md` с учётом двух приводных каналов и новой телеметрии.
+- [x] Зафиксировать изменения в `CHANGELOG.md`.
+
 ## Recent changes (2025-10-12)
 
 - Firmware: added X-Frame-Size header to camera snapshot responses and initial test-frame logging in `vision_color` to help validate real framebuffer dimensions. Camera init iterates candidate frame sizes and reports a `cam_max` value via CLI.
