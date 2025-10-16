@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import socket
 import threading
 import time
 import urllib.error
@@ -906,6 +907,8 @@ class OperatorService:
                 return payload, media_type
         except urllib.error.HTTPError as exc:  # pragma: no cover - network dependent
             raise CameraSnapshotError(f"HTTP {exc.code}: {exc.reason}") from exc
+        except (TimeoutError, socket.timeout) as exc:  # pragma: no cover - network dependent
+            raise CameraSnapshotError("Camera snapshot timed out") from exc
         except urllib.error.URLError as exc:  # pragma: no cover - network dependent
             raise CameraSnapshotError(str(exc.reason or exc)) from exc
 

@@ -7,6 +7,11 @@
 - Unified control-transport status across the operator console: the header badge, Control Link card, and Wi-Fi settings now share a single state source from `OperatorProvider`, so transport availability and endpoints stay in sync regardless of where they are viewed.
 - Refined Wi-Fi settings messaging to reflect live transport data, clarifying when the link is online, on standby for failover, or waiting for discovery.
 
+### Backend & Tooling
+
+- Hardened camera snapshot handling in `OperatorService`: socket-level timeouts are now converted into `CameraSnapshotError`, so Wi-Fi dropouts surface as clean status messages instead of stack traces in the backend logs and WebSocket stream.
+- Added `scripts/flash_firmware.sh` helper with inline usage notes to flash the ESP32-S3 and Arduino Uno targets via PlatformIO (`all`, `esp32`, or `uno` modes) without retyping long commands.
+
 ## [2025-10-15]
 
 ### Documentation & Architecture
