@@ -281,6 +281,22 @@ framesize_t camera_http_detect_supported_max_resolution() {
   }
 
   framesize_t original_size = s_config.frame_size;
+  pixformat_t original_format = PIXFORMAT_JPEG;
+  bool have_original_format = false;
+
+  if (sensor->pixformat >= 0) {
+    original_format = static_cast<pixformat_t>(sensor->pixformat);
+    have_original_format = true;
+  }
+
+  bool switched_to_jpeg = false;
+  if (have_original_format && original_format != PIXFORMAT_JPEG) {
+    if (sensor->set_pixformat(sensor, PIXFORMAT_JPEG) == 0) {
+      switched_to_jpeg = true;
+    } else {
+      log_line("[CameraHTTP] Failed to switch sensor to JPEG for probing");
+    }
+  }
   framesize_t detected = kResolutionTable[0].value;
   const ResolutionEntry* detected_entry = &kResolutionTable[0];
 
@@ -340,6 +356,12 @@ framesize_t camera_http_detect_supported_max_resolution() {
 
   if (sensor->set_framesize(sensor, original_size) != 0) {
     log_line("[CameraHTTP] Failed to restore frame size after probe");
+  }
+
+  if (switched_to_jpeg && have_original_format) {
+    if (sensor->set_pixformat(sensor, original_format) != 0) {
+      log_line("[CameraHTTP] Failed to restore pixel format after probe");
+    }
   }
 
   camera_http_set_supported_max_resolution(detected);

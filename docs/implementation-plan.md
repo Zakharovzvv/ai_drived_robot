@@ -139,6 +139,17 @@
 - [x] Переписать `docs/ICD — Протокол обмена ESP32↔UNO.md` с учётом двух приводных каналов и новой телеметрии.
 - [x] Зафиксировать изменения в `CHANGELOG.md`.
 
+### 17. Camera Snapshot Corruption Regression (2025-10-16)
+
+- [ ] Провести диагностику артефактов JPEG при высоких разрешениях, зафиксировать поведение текущей прошивки (CLI `CAMSTREAM`, REST `/camera/snapshot`).
+- [ ] Изменить инициализацию камеры так, чтобы буферы кадров выделялись под максимальное поддерживаемое разрешение без потери RGB565-пайплайна цветодетекции.
+- [ ] Зафиксировать аварийный ребут `cam_task` при `FRAMESIZE_UXGA`, определить требуемый размер стека потоков камеры.
+- [ ] Увеличить `CONFIG_CAMERA_TASK_STACK_SIZE` через `platformio.ini` и убедиться, что ESP32 перестает перезагружаться на UXGA.
+- [ ] Повторно прошить ESP32, проверить стабильность HTTP `/camera/snapshot` и задокументировать итоговое разрешение.
+- [ ] Пересобрать прошивку, прошить ESP32 и подтвердить корректные кадры на максимальном разрешении; убедиться, что цветодетектор продолжает работать на QQVGA.
+- [ ] Вынести пины камеры в общий заголовок по аналогии с Freenove `camera_pins.h`, убрать хардкод из `vision_color`.
+- [ ] Перенастроить стартовую инициализацию камеры под рекомендованный профиль (SVGA + `fb_count`/`grab_mode` с учетом PSRAM) и подтвердить отсутствие `cam_task` reset без увеличенного стека.
+
 ## Recent changes (2025-10-12)
 
 - Firmware: added X-Frame-Size header to camera snapshot responses and initial test-frame logging in `vision_color` to help validate real framebuffer dimensions. Camera init iterates candidate frame sizes and reports a `cam_max` value via CLI.
