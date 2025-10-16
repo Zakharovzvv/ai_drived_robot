@@ -11,6 +11,12 @@
 
 - Hardened camera snapshot handling in `OperatorService`: socket-level timeouts are now converted into `CameraSnapshotError`, so Wi-Fi dropouts surface as clean status messages instead of stack traces in the backend logs and WebSocket stream.
 - Added `scripts/flash_firmware.sh` helper with inline usage notes to flash the ESP32-S3 and Arduino Uno targets via PlatformIO (`all`, `esp32`, or `uno` modes) without retyping long commands.
+- Normalized Wi-Fi transport diagnostics: `/api/diagnostics`, `/api/control/transport`, and the frontend now consume the same control snapshot so the reported IP, availability, and last-success timestamps stay consistent even after endpoint changes or reconnects; regression tests cover the transport summary.
+
+### Firmware & Testing
+
+- Added CLI command group `CTRL` (firmware `main.cpp`), enabling manual DRIVE/TURN/ELEV/GRIP/HOME invocations for benchtop validation via `rbm-operator command`.
+- Authored `docs/testing/basic-motion-test.md` with a motion smoke-test checklist and referenced it from the deploy/operator guides for quick access during hardware bring-up.
 
 ## [2025-10-15]
 

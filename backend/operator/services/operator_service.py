@@ -415,19 +415,70 @@ class OperatorService:
             order.insert(0, self._active_transport)
         return order
 
+    @staticmethod
+    def _extract_endpoint_host(endpoint: Optional[str]) -> Optional[str]:
+        if not endpoint:
+            return None
+        try:
+            parsed = urlparse(endpoint)
+        except ValueError:
+            return None
+        host = parsed.hostname
+        if host:
+            return host
+        if endpoint.startswith("//"):
+            candidate = endpoint[2:].split("/", 1)[0].strip()
+            return candidate or None
+        fallback = endpoint.split("/", 1)[0].strip()
+        return fallback or None
+
+    def _attach_control_snapshot(self, diag: Dict[str, Any]) -> None:
+        snapshot = self._control_state_snapshot()
+        diag["control"] = snapshot
+
+        wifi_info = diag.setdefault("wifi", {})
+        wifi_entry = None
+        for entry in snapshot.get("transports", []):
+            if entry.get("id") == TRANSPORT_WIFI:
+                wifi_entry = entry
+                break
+
+        transport_available = bool(wifi_entry and wifi_entry.get("available"))
+        wifi_info["transport_available"] = transport_available
+        wifi_info["endpoint"] = wifi_entry.get("endpoint") if wifi_entry else wifi_info.get("endpoint")
+        if wifi_entry:
+            wifi_info["last_success"] = wifi_entry.get("last_success")
+            wifi_info["last_failure"] = wifi_entry.get("last_failure")
+            wifi_info["last_error"] = wifi_entry.get("last_error")
+        wifi_info.setdefault("auto_discovery", self._ws_auto_enabled)
+
+        endpoint = wifi_info.get("endpoint")
+        host = self._extract_endpoint_host(endpoint)
+        if "ip" not in wifi_info:
+            wifi_info["ip"] = host if host else None
+        elif host and wifi_info.get("ip") in {None, "", "0.0.0.0"}:
+            wifi_info["ip"] = host
+
+        if "connected" not in wifi_info:
+            wifi_info["connected"] = transport_available
+
     def _ensure_wifi_transport(self, status: Dict[str, Any]) -> None:
-        if not self._ws_auto_enabled:
-            return
         wifi_connected = bool(status.get("wifi_connected"))
         wifi_ip_raw = status.get("wifi_ip")
         wifi_ip = str(wifi_ip_raw or "").strip()
         if not wifi_connected or not wifi_ip or wifi_ip in {"0.0.0.0", "0", "none"}:
             return
 
-        endpoint = f"ws://{wifi_ip}:81/ws/cli"
+        endpoint = self._compose_wifi_endpoint(
+            wifi_ip,
+            self._wifi_ws_port,
+            self._wifi_ws_path,
+        )
         with self._link_lock:
             current_endpoint = self._transport_endpoints.get(TRANSPORT_WIFI)
             if current_endpoint == endpoint and TRANSPORT_WIFI in self._transports:
+                # ensure availability flag reflects runtime
+                self._record_transport_success(TRANSPORT_WIFI)
                 return
 
             existing_link = self._transports.get(TRANSPORT_WIFI)
@@ -439,11 +490,45 @@ class OperatorService:
                 return
 
             save_last_endpoint(endpoint)
+            logger.info("Wi-Fi control transport registered at %s", endpoint)
+
+            if self._env_static_endpoint and self._env_static_endpoint != endpoint:
+                logger.warning(
+                    "Configured OPERATOR_WS_ENDPOINT=%s differs from ESP32-reported IP %s; using runtime value",
+                    self._env_static_endpoint,
+                    endpoint,
+                )
 
             if self._control_mode in {TRANSPORT_WIFI, TRANSPORT_AUTO}:
-                if self._control_mode == TRANSPORT_WIFI or self._active_transport != TRANSPORT_WIFI:
-                    logger.info("Wi-Fi control transport registered at %s", endpoint)
                 self._set_active_transport(TRANSPORT_WIFI)
+
+            self._record_transport_success(TRANSPORT_WIFI)
+
+            self._ws_static_endpoint = endpoint
+
+            if not self._ws_auto_enabled or self._wifi_user_ip is not None:
+                snapshot = dict(self._wifi_config_store)
+                previous_ip = snapshot.get("ip_address")
+                if wifi_ip:
+                    snapshot["ip_address"] = wifi_ip
+                else:
+                    snapshot.pop("ip_address", None)
+                new_ip = snapshot.get("ip_address")
+                if previous_ip != new_ip:
+                    logger.info("Updating stored Wi-Fi IP from %s to %s", previous_ip, wifi_ip)
+                    self._wifi_config_store = snapshot
+                    save_wifi_config(snapshot)
+                self._wifi_user_ip = new_ip
+
+            self._transport_health.setdefault(
+                TRANSPORT_WIFI,
+                {"available": True, "last_error": None, "last_success": None, "last_failure": None},
+            )
+            self._transport_health[TRANSPORT_WIFI].update({
+                "available": True,
+                "last_error": None,
+                "last_success": time.time(),
+            })
 
     async def _maybe_discover_wifi_endpoint(self, *, force: bool = False) -> None:
         if not self._ws_auto_enabled:
@@ -707,6 +792,39 @@ class OperatorService:
         state["last_error"] = error
         state["last_failure"] = time.time()
 
+        if transport == TRANSPORT_WIFI:
+            should_enable_auto = False
+            current_endpoint: Optional[str] = None
+            with self._link_lock:
+                current_endpoint = self._transport_endpoints.get(TRANSPORT_WIFI)
+                static_override_active = bool(self._wifi_user_ip or self._env_static_endpoint)
+                if not static_override_active:
+                    should_enable_auto = True
+                    link = self._transports.pop(TRANSPORT_WIFI, None)
+                    if link and hasattr(link, "close"):
+                        with contextlib.suppress(Exception):
+                            link.close()
+                    self._transport_endpoints[TRANSPORT_WIFI] = None
+                    self._ws_static_endpoint = None
+                    self._ws_auto_enabled = True
+                    if self._active_transport == TRANSPORT_WIFI:
+                        fallback = TRANSPORT_SERIAL if TRANSPORT_SERIAL in self._transports else None
+                        self._set_active_transport(fallback)
+
+            if should_enable_auto:
+                logger.info(
+                    "Wi-Fi transport failure (%s); enabling auto-discovery",
+                    current_endpoint or "unknown endpoint",
+                )
+                clear_last_endpoint()
+                self._last_wifi_discovery_attempt = 0.0
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    pass
+                else:
+                    loop.create_task(self._maybe_discover_wifi_endpoint(force=True))
+
     def _should_skip_transport(self, transport: str) -> bool:
         if self._control_mode != TRANSPORT_AUTO:
             return False
@@ -722,8 +840,34 @@ class OperatorService:
 
     def _control_state_snapshot(self) -> Dict[str, Any]:
         transports: List[Dict[str, Any]] = []
-        for transport_id in sorted(self._transports.keys()):
-            health = self._transport_health.get(transport_id, {})
+        known_transports: Set[str] = set(self._transports.keys()) | set(self._transport_health.keys())
+        if self._active_transport:
+            known_transports.add(self._active_transport)
+        if (
+            TRANSPORT_WIFI in TRANSPORT_LABELS
+            and (
+                self._ws_auto_enabled
+                or self._wifi_user_ip
+                or self._env_static_endpoint
+                or self._transport_endpoints.get(TRANSPORT_WIFI)
+                or TRANSPORT_WIFI in self._transports
+            )
+        ):
+            known_transports.add(TRANSPORT_WIFI)
+        if (
+            TRANSPORT_SERIAL in TRANSPORT_LABELS
+            and (
+                TRANSPORT_SERIAL in self._transports
+                or self._transport_endpoints.get(TRANSPORT_SERIAL)
+            )
+        ):
+            known_transports.add(TRANSPORT_SERIAL)
+
+        for transport_id in sorted(known_transports):
+            health = self._transport_health.setdefault(
+                transport_id,
+                {"available": False, "last_error": None, "last_success": None, "last_failure": None},
+            )
             transports.append(
                 {
                     "id": transport_id,
@@ -1394,6 +1538,7 @@ class OperatorService:
                 "status_error": str(exc),
                 "status_age_s": None,
             }
+            self._attach_control_snapshot(diag)
             if (
                 self._control_mode == TRANSPORT_AUTO
                 and not self._initial_probe_task
@@ -1493,6 +1638,7 @@ class OperatorService:
         if self._last_status_error:
             diag["meta"]["status_error"] = self._last_status_error
 
+        self._attach_control_snapshot(diag)
         return diag
 
     async def register_client(self) -> asyncio.Queue[dict[str, Any]]:
