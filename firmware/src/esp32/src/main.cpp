@@ -26,6 +26,61 @@ static void cli_print_camcfg(Stream& io);
 static uint32_t g_last_uno_check_ms = 0;
 static SemaphoreHandle_t g_cli_mutex = nullptr;
 
+namespace {
+
+struct CtrlToken {
+  String key;
+  String value;
+};
+
+static bool parse_int(const String& text, long& out){
+  if(!text.length()) return false;
+  for(size_t i = 0; i < text.length(); ++i){
+    char c = text[i];
+    if(i == 0 && (c == '-' || c == '+')) continue;
+    if(!isDigit(static_cast<unsigned char>(c))) return false;
+  }
+  out = text.toInt();
+  return true;
+}
+
+static int16_t to_i16(long value){
+  if(value < -32768L) return static_cast<int16_t>(-32768L);
+  if(value > 32767L) return static_cast<int16_t>(32767L);
+  return static_cast<int16_t>(value);
+}
+
+static size_t parse_tokens(const String& payload, CtrlToken* out, size_t maxTokens){
+  String normalized = payload;
+  normalized.replace(',', ' ');
+  size_t count = 0;
+  int start = 0;
+  while(start < normalized.length() && count < maxTokens){
+    int end = normalized.indexOf(' ', start);
+    if(end < 0) end = normalized.length();
+    String token = normalized.substring(start, end);
+    token.trim();
+    if(token.length()){
+      int eq = token.indexOf('=');
+      if(eq >= 0){
+        out[count].key = token.substring(0, eq);
+        out[count].value = token.substring(eq + 1);
+      }else{
+        out[count].key = token;
+        out[count].value = "";
+      }
+      out[count].key.trim();
+      out[count].value.trim();
+      out[count].key.toUpperCase();
+      ++count;
+    }
+    start = end + 1;
+  }
+  return count;
+}
+
+}  // namespace
+
 void setup(){
   Serial.begin(115200);
   delay(1000);
@@ -193,6 +248,204 @@ static void cli_execute_unlocked(const String& command, Stream& io){
 
   String upper = command;
   upper.toUpperCase();
+
+  if(upper.startsWith("CTRL")){
+    String args = command.substring(strlen("CTRL"));
+    args.trim();
+    if(!args.length()){
+      io.println("ctrl_error=SYNTAX");
+      log_line("[CLI] ctrl missing target");
+      return;
+    }
+
+    int spaceIdx = args.indexOf(' ');
+    String target = (spaceIdx < 0) ? args : args.substring(0, spaceIdx);
+    String payload = (spaceIdx < 0) ? "" : args.substring(spaceIdx + 1);
+    target.trim();
+    target.toUpperCase();
+
+    if(target == "HOME"){
+      if(!g_uno_ready){
+        io.println("ctrl_error=UNO_OFFLINE");
+        log_line("[CLI] ctrl home aborted (UNO offline)");
+        return;
+      }
+      bool ok = i2c_cmd_home();
+      if(ok){
+        io.println("ctrl_home=OK");
+        log_line("[CLI] ctrl home ok");
+      }else{
+        io.println("ctrl_error=I2C");
+        log_line("[CLI] ctrl home failed");
+      }
+      return;
+    }
+
+    if(!g_uno_ready){
+      io.println("ctrl_error=UNO_OFFLINE");
+      log_line("[CLI] ctrl aborted (UNO offline)");
+      return;
+    }
+
+    CtrlToken tokens[8];
+    size_t tokenCount = parse_tokens(payload, tokens, 8);
+
+    if(target == "DRIVE" || target == "MOVE"){
+      long vx = 0;
+      long vy = 0;
+      long w = 0;
+      long t = 500;
+      bool vxSet = false;
+      bool vySet = false;
+      bool wSet = false;
+      bool tSet = false;
+      bool error = false;
+
+      for(size_t i = 0; i < tokenCount && !error; ++i){
+        const String& key = tokens[i].key;
+        const String& value = tokens[i].value;
+        if(key == "VX"){ long tmp; if(!parse_int(value, tmp)){ error = true; break; } vx = tmp; vxSet = true; }
+        else if(key == "VY"){ long tmp; if(!parse_int(value, tmp)){ error = true; break; } vy = tmp; vySet = true; }
+        else if(key == "W" || key == "OMEGA"){ long tmp; if(!parse_int(value, tmp)){ error = true; break; } w = tmp; wSet = true; }
+        else if(key == "T" || key == "TIME" || key == "MS"){ long tmp; if(!parse_int(value, tmp) || tmp <= 0){ error = true; break; } t = tmp; tSet = true; }
+        else if(key.length()){ error = true; }
+      }
+
+      if(!vxSet && !vySet && !wSet){
+        error = true;
+      }
+
+      if(error){
+        io.println("ctrl_error=DRIVE_ARGS");
+        log_line("[CLI] ctrl drive args invalid");
+        return;
+      }
+
+      if(!i2c_cmd_drive(to_i16(vx), to_i16(vy), to_i16(w), to_i16(t))){
+        io.println("ctrl_error=I2C");
+        log_line("[CLI] ctrl drive failed");
+        return;
+      }
+      io.printf("ctrl_drive=OK vx=%ld vy=%ld w=%ld t=%ld\n", vx, vy, w, t);
+      logf("[CLI] ctrl drive vx=%ld vy=%ld w=%ld t=%ld", vx, vy, w, t);
+      return;
+    }
+
+    if(target == "TURN"){
+      long w = 0;
+      long t = 500;
+      bool wSet = false;
+      bool error = false;
+
+      for(size_t i = 0; i < tokenCount && !error; ++i){
+        const String& key = tokens[i].key;
+        const String& value = tokens[i].value;
+        if(key == "DIR" || key == "DIRECTION"){
+          if(value.equalsIgnoreCase("LEFT")){ w = 400; wSet = true; }
+          else if(value.equalsIgnoreCase("RIGHT")){ w = -400; wSet = true; }
+          else{ error = true; }
+        }else if(key == "LEFT"){ w = 400; wSet = true; }
+        else if(key == "RIGHT"){ w = -400; wSet = true; }
+        else if(key == "W" || key == "OMEGA" || key == "SPEED"){ long tmp; if(!parse_int(value, tmp)){ error = true; break; } w = tmp; wSet = true; }
+        else if(key == "T" || key == "TIME" || key == "MS"){ long tmp; if(!parse_int(value, tmp) || tmp <= 0){ error = true; break; } t = tmp; }
+        else if(key.length()){ error = true; }
+      }
+
+      if(!wSet || error){
+        io.println("ctrl_error=TURN_ARGS");
+        log_line("[CLI] ctrl turn args invalid");
+        return;
+      }
+
+      if(!i2c_cmd_drive(0, 0, to_i16(w), to_i16(t))){
+        io.println("ctrl_error=I2C");
+        log_line("[CLI] ctrl turn failed");
+        return;
+      }
+      io.printf("ctrl_turn=OK w=%ld t=%ld\n", w, t);
+      logf("[CLI] ctrl turn w=%ld t=%ld", w, t);
+      return;
+    }
+
+    if(target == "ELEV" || target == "LIFT"){
+      long h = 0;
+      long speed = 150;
+      long mode = 0;
+      bool hSet = false;
+      bool error = false;
+
+      for(size_t i = 0; i < tokenCount && !error; ++i){
+        const String& key = tokens[i].key;
+        const String& value = tokens[i].value;
+        if(key == "H" || key == "HEIGHT" || key == "MM"){ long tmp; if(!parse_int(value, tmp)){ error = true; break; } h = tmp; hSet = true; }
+        else if(key == "SPEED" || key == "V" || key == "VEL"){ long tmp; if(!parse_int(value, tmp)){ error = true; break; } speed = tmp; }
+        else if(key == "MODE"){ long tmp; if(!parse_int(value, tmp)){ error = true; break; } mode = tmp; }
+        else if(key.length()){ error = true; }
+      }
+
+      if(!hSet || error){
+        io.println("ctrl_error=ELEV_ARGS");
+        log_line("[CLI] ctrl elev args invalid");
+        return;
+      }
+
+      if(!i2c_cmd_elev(to_i16(h), to_i16(speed), static_cast<uint8_t>(mode))){
+        io.println("ctrl_error=I2C");
+        log_line("[CLI] ctrl elev failed");
+        return;
+      }
+      io.printf("ctrl_elev=OK h=%ld speed=%ld mode=%ld\n", h, speed, mode);
+      logf("[CLI] ctrl elev h=%ld speed=%ld mode=%ld", h, speed, mode);
+      return;
+    }
+
+    if(target == "GRIP"){
+      uint8_t cmd = 0;
+      long arg = 0;
+      bool cmdSet = false;
+      bool argSet = false;
+      bool error = false;
+
+      for(size_t i = 0; i < tokenCount && !error; ++i){
+        const String& key = tokens[i].key;
+        const String& value = tokens[i].value;
+        if(key == "OPEN"){ cmd = 0; cmdSet = true; }
+        else if(key == "CLOSE"){ cmd = 1; cmdSet = true; }
+        else if(key == "HOLD"){ cmd = 2; cmdSet = true; }
+        else if(key == "CMD"){ long tmp; if(!parse_int(value, tmp)){ error = true; break; } cmd = static_cast<uint8_t>(tmp & 0xFF); cmdSet = true; }
+        else if(key == "DEG" || key == "ANGLE"){ long tmp; if(!parse_int(value, tmp)){ error = true; break; } arg = tmp; argSet = true; }
+        else if(key.length()){ error = true; }
+      }
+
+      if(!cmdSet && argSet){
+        cmd = 2;
+        cmdSet = true;
+      }
+      if(!cmdSet){
+        cmd = 0;
+        cmdSet = true;
+      }
+
+      if(error){
+        io.println("ctrl_error=GRIP_ARGS");
+        log_line("[CLI] ctrl grip args invalid");
+        return;
+      }
+
+      if(!i2c_cmd_grip(cmd, to_i16(arg))){
+        io.println("ctrl_error=I2C");
+        log_line("[CLI] ctrl grip failed");
+        return;
+      }
+      io.printf("ctrl_grip=OK cmd=%u arg=%ld\n", static_cast<unsigned>(cmd), arg);
+      logf("[CLI] ctrl grip cmd=%u arg=%ld", static_cast<unsigned>(cmd), arg);
+      return;
+    }
+
+    io.println("ctrl_error=UNKNOWN_TARGET");
+    log_line("[CLI] ctrl unknown target");
+    return;
+  }
 
   if(upper == "STATUS"){
     cli_print_status(io);

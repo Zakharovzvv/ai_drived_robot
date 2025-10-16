@@ -57,6 +57,21 @@ rbm-operator smap save
 - `--baudrate` — скорость UART, по умолчанию `115200`.
 - `--raw` — вывести оригинальные строки CLI без JSON-преобразования.
 
+### Ручные проверки движения
+
+Прошивка поддерживает набор команд `CTRL`, позволяющих вручную пробежать приводы без изменения кода:
+
+```bash
+rbm-operator command "CTRL HOME"                 # лифт/захват в ноль
+rbm-operator command "CTRL DRIVE vx=200 t=1500"  # прямолинейный ход
+rbm-operator command "CTRL TURN dir=left speed=350 t=1200"
+rbm-operator command "CTRL ELEV h=120 speed=120" # лифт вверх
+rbm-operator command "CTRL GRIP CLOSE"           # закрыть захват
+rbm-operator brake                                # нейтраль
+```
+
+Подробный порядок шагов, включая ожидания по телеметрии, см. в `docs/testing/basic-motion-test.md`.
+
 ## 4. Веб-интерфейс
 
 1. Запустите backend (если не используется стартовый скрипт):
