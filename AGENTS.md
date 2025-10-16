@@ -33,3 +33,5 @@
 - Для перепрошивки ESP32 и Arduino используйте PlatformIO: `platformio run -d firmware -t upload`. Перед запуском убедитесь, что плата подключена и выбрана корректная среда (`env = esp32dev` в `firmware/platformio.ini`).
     - ESP32 cd /Users/vladimir/Documents/Projects/robots/ai_drived_robot/firmware && /Users/vladimir/.platformio/penv/bin/platformio run --environment esp32s3 --target upload
     - Arduino cd /Users/vladimir/Documents/Projects/robots/ai_drived_robot/firmware && /Users/vladimir/.platformio/penv/bin/platformio run --environment uno --target upload
+
+    ping -i 0.2 -c 600 192.168.0.72

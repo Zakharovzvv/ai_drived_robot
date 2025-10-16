@@ -40,6 +40,12 @@ class StubLink:
         self.active_port = None
 
 
+@pytest.fixture(autouse=True)
+def stub_wifi_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(operator_service, "load_wifi_config", lambda: {})
+    monkeypatch.setattr(operator_service, "save_wifi_config", lambda config: None)
+
+
 @pytest.mark.asyncio
 async def test_run_command_falls_back_to_serial(monkeypatch: pytest.MonkeyPatch) -> None:
     wifi_link = StubLink([SerialNotFoundError("wifi down")], endpoint="ws://stub")
@@ -112,3 +118,59 @@ async def test_set_control_mode_requires_configured_transport(monkeypatch: pytes
 
     with pytest.raises(ValueError, match="Transport wifi is not configured"):
         await svc.set_control_mode("wifi")
+
+
+@pytest.mark.asyncio
+async def test_update_wifi_config_sets_static_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    serial_link = StubLink([], endpoint="socket://stub")
+    monkeypatch.setattr(operator_service, "ESP32Link", lambda *_, **__: serial_link)
+
+    saved_config: dict[str, object] = {}
+    monkeypatch.setattr(operator_service, "save_wifi_config", lambda config: saved_config.update(config))
+    monkeypatch.setattr(operator_service, "load_wifi_config", lambda: {})
+    monkeypatch.setattr(operator_service, "load_last_endpoint", lambda: None)
+    recorded_endpoints: list[str] = []
+    monkeypatch.setattr(operator_service, "save_last_endpoint", lambda endpoint: recorded_endpoints.append(endpoint))
+
+    class DummyWS:
+        def __init__(self, url: str, timeout: float) -> None:
+            self.url = url
+            self.timeout = timeout
+
+        def run_command(self, *args, **kwargs):  # pragma: no cover - not used
+            raise SerialNotFoundError("not implemented")
+
+        def collect_pending_logs(self):  # pragma: no cover - not used
+            return []
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(operator_service, "ESP32WSLink", lambda url, timeout: DummyWS(url, timeout))
+
+    svc = OperatorService(port="socket://stub", control_transport="auto")
+
+    result = await svc.update_wifi_config(
+        mac_address="CC-BA-97-11-22-33",
+        ip_address="192.168.31.91",
+    )
+
+    assert result["mac_address"] == "cc:ba:97:11:22:33"
+    assert result["mac_prefix"] == "cc:ba:97"
+    assert result["ip_address"] == "192.168.31.91"
+    assert result["endpoint"] == "ws://192.168.31.91:81/ws/cli"
+    assert result["auto_discovery"] is False
+    assert recorded_endpoints[-1] == "ws://192.168.31.91:81/ws/cli"
+    assert saved_config["ip_address"] == "192.168.31.91"
+
+
+@pytest.mark.asyncio
+async def test_update_wifi_config_rejects_invalid_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    serial_link = StubLink([], endpoint="socket://stub")
+    monkeypatch.setattr(operator_service, "ESP32Link", lambda *_, **__: serial_link)
+    monkeypatch.setattr(operator_service, "ESP32WSLink", lambda url, timeout: StubLink([], endpoint=url))
+
+    svc = OperatorService(port="socket://stub", control_transport="auto")
+
+    with pytest.raises(ValueError, match="Invalid IPv4/IPv6 address"):
+        await svc.update_wifi_config(ip_address="not-an-ip")

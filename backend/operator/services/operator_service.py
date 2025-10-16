@@ -4,9 +4,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import base64
+import ipaddress
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -19,7 +21,9 @@ from fastapi import WebSocket
 from ..esp32_link import CommandResult, ESP32Link, SerialNotFoundError
 from ..esp32_ws_link import ESP32WSLink
 from ..log_parser import structure_logs
+from .wifi_config import load_wifi_config, save_wifi_config
 from .wifi_registry import clear_last_endpoint, load_last_endpoint, save_last_endpoint
+from .wifi_discovery import discover_wifi_endpoint
 
 logger = logging.getLogger("operator.service")
 
@@ -31,6 +35,9 @@ TRANSPORT_LABELS = {
     TRANSPORT_SERIAL: "UART",
 }
 DEFAULT_TRANSPORT_RETRY_COOLDOWN = 5.0
+DEFAULT_WIFI_DISCOVERY_INTERVAL = 15.0
+MAC_TOKEN_RE = re.compile(r"[0-9a-f]{2}", re.IGNORECASE)
+UNSET = object()
 
 
 class CameraNotConfiguredError(RuntimeError):
@@ -127,13 +134,95 @@ class OperatorService:
                 ws_override = env_ws
         ws_clean = ws_override.strip() if isinstance(ws_override, str) else None
 
+        self._env_static_endpoint = ws_clean
         self._ws_static_endpoint = ws_clean
         self._ws_auto_enabled = False
 
-        if ws_clean:
-            if self._configure_wifi_transport(ws_clean, timeout_override):
-                logger.info("Wi-Fi transport enabled with static endpoint %s", ws_clean)
-        else:
+        self._wifi_config_store: Dict[str, Any] = load_wifi_config()
+
+        self._wifi_mac_prefix = os.getenv("OPERATOR_WIFI_MAC_PREFIX")
+        self._wifi_mac_address = os.getenv("OPERATOR_WIFI_MAC_ADDRESS")
+
+        config_mac_address = self._wifi_config_store.get("mac_address")
+        if isinstance(config_mac_address, str) and config_mac_address.strip():
+            self._wifi_mac_address = config_mac_address.strip()
+
+        config_mac_prefix = self._wifi_config_store.get("mac_prefix")
+        if isinstance(config_mac_prefix, str) and config_mac_prefix.strip():
+            self._wifi_mac_prefix = config_mac_prefix.strip()
+
+        self._wifi_mac_address = self._normalize_mac_address(self._wifi_mac_address)
+        derived_prefix = self._normalize_mac_prefix(self._wifi_mac_address)
+        normalized_prefix = self._normalize_mac_prefix(self._wifi_mac_prefix)
+        self._wifi_mac_prefix = normalized_prefix or derived_prefix
+
+        ws_port_env = os.getenv("OPERATOR_WIFI_WS_PORT")
+        self._wifi_ws_port: int = 81
+        if ws_port_env:
+            try:
+                port_candidate = int(ws_port_env)
+            except ValueError:
+                logger.warning("Invalid OPERATOR_WIFI_WS_PORT=%s; using default", ws_port_env)
+            else:
+                if port_candidate > 0:
+                    self._wifi_ws_port = port_candidate
+                else:
+                    logger.warning(
+                        "Invalid OPERATOR_WIFI_WS_PORT=%s; using default", ws_port_env
+                    )
+        config_port = self._wifi_config_store.get("ws_port")
+        if isinstance(config_port, int) and config_port > 0:
+            self._wifi_ws_port = config_port
+
+        ws_path_env = os.getenv("OPERATOR_WIFI_WS_PATH")
+        config_path = self._wifi_config_store.get("ws_path")
+        resolved_path = ws_path_env if ws_path_env else config_path
+        self._wifi_ws_path = (resolved_path or "/ws/cli").strip() or "/ws/cli"
+        if not self._wifi_ws_path.startswith("/"):
+            self._wifi_ws_path = f"/{self._wifi_ws_path}"
+
+        interval_env = os.getenv("OPERATOR_WIFI_DISCOVERY_INTERVAL")
+        self._wifi_discovery_interval = DEFAULT_WIFI_DISCOVERY_INTERVAL
+        if interval_env:
+            try:
+                interval_value = float(interval_env)
+            except ValueError:
+                logger.warning(
+                    "Invalid OPERATOR_WIFI_DISCOVERY_INTERVAL=%s; using %.1f",
+                    interval_env,
+                    DEFAULT_WIFI_DISCOVERY_INTERVAL,
+                )
+            else:
+                self._wifi_discovery_interval = max(1.0, interval_value)
+        self._last_wifi_discovery_attempt = 0.0
+
+        self._wifi_user_ip: Optional[str] = None
+        config_ip = self._wifi_config_store.get("ip_address")
+        if isinstance(config_ip, str) and config_ip.strip():
+            self._wifi_user_ip = config_ip.strip()
+            try:
+                ipaddress.ip_address(self._wifi_user_ip)
+            except ValueError:
+                logger.warning("Ignoring stored Wi-Fi IP override: %s", self._wifi_user_ip)
+                self._wifi_user_ip = None
+            else:
+                self._ws_static_endpoint = self._compose_wifi_endpoint(
+                    self._wifi_user_ip,
+                    self._wifi_ws_port,
+                    self._wifi_ws_path,
+                )
+
+        self._ws_auto_enabled = self._ws_static_endpoint is None
+
+        if self._ws_static_endpoint:
+            if self._configure_wifi_transport(self._ws_static_endpoint, timeout_override):
+                logger.info("Wi-Fi transport enabled with static endpoint %s", self._ws_static_endpoint)
+                save_last_endpoint(self._ws_static_endpoint)
+            else:
+                logger.warning("Static Wi-Fi endpoint %s unavailable; falling back to discovery", self._ws_static_endpoint)
+                self._ws_static_endpoint = None
+                self._ws_auto_enabled = True
+        if self._ws_auto_enabled:
             cached_endpoint = load_last_endpoint()
             if cached_endpoint:
                 logger.info("Restoring Wi-Fi transport from cached endpoint %s", cached_endpoint)
@@ -143,9 +232,9 @@ class OperatorService:
                         cached_endpoint,
                     )
                     clear_last_endpoint()
-                    cached_endpoint = None
-            self._ws_auto_enabled = True
-            if desired_mode == TRANSPORT_WIFI:
+                else:
+                    self._ws_auto_enabled = True
+            if self._ws_auto_enabled and desired_mode == TRANSPORT_WIFI:
                 logger.info(
                     "Wi-Fi transport will be auto-configured once the ESP32 reports its IP address"
                 )
@@ -223,6 +312,31 @@ class OperatorService:
         self._shelf_cache_timestamp: Optional[float] = None
         self._shelf_cache_ttl = 1.0
         self._cached_camera_max_resolution = None
+
+    def _compose_wifi_endpoint(self, ip: str, port: Optional[int], path: Optional[str]) -> str:
+        resolved_port = port if isinstance(port, int) and port > 0 else 81
+        resolved_path = (path or "/ws/cli").strip() or "/ws/cli"
+        if not resolved_path.startswith("/"):
+            resolved_path = f"/{resolved_path}"
+        return f"ws://{ip}:{resolved_port}{resolved_path}"
+
+    @staticmethod
+    def _extract_mac_tokens(value: Optional[str]) -> List[str]:
+        if not value:
+            return []
+        return MAC_TOKEN_RE.findall(value)
+
+    def _normalize_mac_address(self, value: Optional[str]) -> Optional[str]:
+        tokens = self._extract_mac_tokens(value)
+        if len(tokens) < 6:
+            return None
+        return ":".join(token.lower() for token in tokens[:6])
+
+    def _normalize_mac_prefix(self, value: Optional[str]) -> Optional[str]:
+        tokens = self._extract_mac_tokens(value)
+        if len(tokens) < 3:
+            return None
+        return ":".join(token.lower() for token in tokens[:3])
 
     def _configure_wifi_transport(self, endpoint: str, timeout: float) -> bool:
         try:
@@ -329,6 +443,250 @@ class OperatorService:
                 if self._control_mode == TRANSPORT_WIFI or self._active_transport != TRANSPORT_WIFI:
                     logger.info("Wi-Fi control transport registered at %s", endpoint)
                 self._set_active_transport(TRANSPORT_WIFI)
+
+    async def _maybe_discover_wifi_endpoint(self, *, force: bool = False) -> None:
+        if not self._ws_auto_enabled:
+            return
+        now = time.time()
+        if not force and (now - self._last_wifi_discovery_attempt) < self._wifi_discovery_interval:
+            return
+        self._last_wifi_discovery_attempt = now
+
+        try:
+            endpoint = await asyncio.to_thread(
+                discover_wifi_endpoint,
+                mac_prefix=self._wifi_mac_prefix,
+                mac_address=self._wifi_mac_address,
+                port=self._wifi_ws_port,
+                path=self._wifi_ws_path,
+            )
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Wi-Fi discovery via MAC lookup failed", exc_info=True)
+            return
+
+        if not endpoint:
+            return
+
+        with self._link_lock:
+            current = self._transport_endpoints.get(TRANSPORT_WIFI)
+            if current == endpoint and TRANSPORT_WIFI in self._transports:
+                return
+
+            existing_link = self._transports.get(TRANSPORT_WIFI)
+            if existing_link and hasattr(existing_link, "close"):
+                with contextlib.suppress(Exception):
+                    existing_link.close()
+
+            if not self._configure_wifi_transport(endpoint, self._serial_timeout):
+                return
+
+            save_last_endpoint(endpoint)
+            logger.info("Auto-discovered Wi-Fi control endpoint at %s", endpoint)
+            if self._control_mode in {TRANSPORT_WIFI, TRANSPORT_AUTO}:
+                self._set_active_transport(TRANSPORT_WIFI)
+
+    def get_wifi_config(self) -> Dict[str, Any]:
+        with self._link_lock:
+            endpoint = self._transport_endpoints.get(TRANSPORT_WIFI)
+            health = self._transport_health.get(TRANSPORT_WIFI, {})
+            return {
+                "mac_address": self._wifi_mac_address,
+                "mac_prefix": self._wifi_mac_prefix,
+                "ip_address": self._wifi_user_ip,
+                "ws_port": self._wifi_ws_port,
+                "ws_path": self._wifi_ws_path,
+                "endpoint": endpoint,
+                "transport_available": bool(health.get("available", False)),
+                "auto_discovery": self._ws_auto_enabled,
+            }
+
+    async def update_wifi_config(
+        self,
+        *,
+        mac_address: object = UNSET,
+        mac_prefix: object = UNSET,
+        ip_address: object = UNSET,
+        ws_port: object = UNSET,
+        ws_path: object = UNSET,
+    ) -> Dict[str, Any]:
+        mac_address_update = UNSET
+        if mac_address is not UNSET:
+            text = None if mac_address is None else str(mac_address).strip()
+            if not text:
+                mac_address_update = None
+            else:
+                normalized = self._normalize_mac_address(text)
+                if normalized is None:
+                    raise ValueError("Invalid MAC address format. Expected 6 octets (e.g. cc:ba:97:aa:bb:cc).")
+                mac_address_update = normalized
+
+        mac_prefix_update = UNSET
+        if mac_prefix is not UNSET:
+            text = None if mac_prefix is None else str(mac_prefix).strip()
+            if not text:
+                mac_prefix_update = None
+            else:
+                normalized = self._normalize_mac_prefix(text)
+                if normalized is None:
+                    raise ValueError("Invalid MAC prefix format. Provide at least 3 octets (e.g. cc:ba:97).")
+                mac_prefix_update = normalized
+
+        ip_update = UNSET
+        if ip_address is not UNSET:
+            text = None if ip_address is None else str(ip_address).strip()
+            if not text:
+                ip_update = None
+            else:
+                try:
+                    ipaddress.ip_address(text)
+                except ValueError as exc:
+                    raise ValueError(f"Invalid IPv4/IPv6 address: {text}") from exc
+                ip_update = text
+
+        port_update = UNSET
+        if ws_port is not UNSET:
+            if ws_port in (None, ""):
+                port_update = None
+            else:
+                try:
+                    port_value = int(ws_port)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("Wi-Fi port must be an integer") from exc
+                if port_value <= 0 or port_value > 65535:
+                    raise ValueError("Wi-Fi port must be between 1 and 65535")
+                port_update = port_value
+
+        path_update = UNSET
+        if ws_path is not UNSET:
+            if ws_path is None:
+                path_update = None
+            else:
+                text = str(ws_path).strip()
+                if not text:
+                    path_update = None
+                else:
+                    if not text.startswith("/"):
+                        text = f"/{text}"
+                    path_update = text
+
+        with self._link_lock:
+            config_snapshot = dict(self._wifi_config_store)
+            old_endpoint = self._transport_endpoints.get(TRANSPORT_WIFI)
+            old_link = self._transports.get(TRANSPORT_WIFI)
+            old_health = dict(self._transport_health.get(TRANSPORT_WIFI, {
+                "available": False,
+                "last_error": None,
+                "last_success": None,
+                "last_failure": None,
+            }))
+
+            if mac_address_update is not UNSET:
+                if mac_address_update is None:
+                    config_snapshot.pop("mac_address", None)
+                    self._wifi_mac_address = None
+                else:
+                    config_snapshot["mac_address"] = mac_address_update
+                    self._wifi_mac_address = mac_address_update
+
+            if mac_prefix_update is not UNSET:
+                if mac_prefix_update is None:
+                    config_snapshot.pop("mac_prefix", None)
+                    self._wifi_mac_prefix = None
+                else:
+                    config_snapshot["mac_prefix"] = mac_prefix_update
+                    self._wifi_mac_prefix = mac_prefix_update
+
+            if self._wifi_mac_prefix is None and self._wifi_mac_address:
+                self._wifi_mac_prefix = self._normalize_mac_prefix(self._wifi_mac_address)
+
+            if port_update is not UNSET:
+                if port_update is None:
+                    config_snapshot.pop("ws_port", None)
+                    self._wifi_ws_port = 81
+                else:
+                    config_snapshot["ws_port"] = port_update
+                    self._wifi_ws_port = port_update
+
+            if path_update is not UNSET:
+                if path_update is None:
+                    config_snapshot.pop("ws_path", None)
+                    self._wifi_ws_path = "/ws/cli"
+                else:
+                    config_snapshot["ws_path"] = path_update
+                    self._wifi_ws_path = path_update
+
+            if ip_update is not UNSET:
+                if ip_update is None:
+                    config_snapshot.pop("ip_address", None)
+                    self._wifi_user_ip = None
+                else:
+                    config_snapshot["ip_address"] = ip_update
+                    self._wifi_user_ip = ip_update
+
+            desired_endpoint: Optional[str]
+            if self._wifi_user_ip:
+                desired_endpoint = self._compose_wifi_endpoint(
+                    self._wifi_user_ip,
+                    self._wifi_ws_port,
+                    self._wifi_ws_path,
+                )
+            else:
+                desired_endpoint = self._env_static_endpoint
+
+            endpoint_changed = desired_endpoint != old_endpoint
+
+            if desired_endpoint:
+                success = True
+                if endpoint_changed or TRANSPORT_WIFI not in self._transports:
+                    if not self._configure_wifi_transport(desired_endpoint, self._serial_timeout):
+                        # restore snapshot before raising
+                        if old_link is not None:
+                            self._transports[TRANSPORT_WIFI] = old_link
+                        else:
+                            self._transports.pop(TRANSPORT_WIFI, None)
+                        if old_endpoint is not None:
+                            self._transport_endpoints[TRANSPORT_WIFI] = old_endpoint
+                        else:
+                            self._transport_endpoints.pop(TRANSPORT_WIFI, None)
+                        self._transport_health[TRANSPORT_WIFI] = old_health
+                        success = False
+                    else:
+                        if old_link and old_link is not self._transports.get(TRANSPORT_WIFI):
+                            with contextlib.suppress(Exception):
+                                old_link.close()
+                        save_last_endpoint(desired_endpoint)
+                if not success:
+                    raise ValueError(f"Failed to connect to Wi-Fi endpoint {desired_endpoint}")
+                self._ws_static_endpoint = desired_endpoint
+                self._ws_auto_enabled = False
+                if self._control_mode in {TRANSPORT_WIFI, TRANSPORT_AUTO}:
+                    self._set_active_transport(TRANSPORT_WIFI)
+            else:
+                if old_link:
+                    with contextlib.suppress(Exception):
+                        old_link.close()
+                self._transports.pop(TRANSPORT_WIFI, None)
+                self._transport_endpoints[TRANSPORT_WIFI] = None
+                state = self._transport_health.setdefault(
+                    TRANSPORT_WIFI,
+                    {"available": False, "last_error": None, "last_success": None, "last_failure": None},
+                )
+                state.update({"available": False, "last_error": None})
+                self._ws_static_endpoint = None
+                self._ws_auto_enabled = True
+                if self._active_transport == TRANSPORT_WIFI:
+                    fallback = TRANSPORT_SERIAL if TRANSPORT_SERIAL in self._transports else None
+                    self._set_active_transport(fallback)
+
+            self._wifi_config_store = {
+                key: value for key, value in config_snapshot.items() if value is not None
+            }
+            save_wifi_config(self._wifi_config_store)
+
+        if self._ws_auto_enabled:
+            await self._maybe_discover_wifi_endpoint(force=True)
+
+        return self.get_wifi_config()
 
     def _record_transport_success(self, transport: str) -> None:
         state = self._transport_health.setdefault(
@@ -448,6 +806,8 @@ class OperatorService:
         if self._poll_task and not self._poll_task.done():
             return
         self._stop_event.clear()
+        if self._ws_auto_enabled:
+            await self._maybe_discover_wifi_endpoint(force=True)
         if self._control_mode == TRANSPORT_AUTO and not self._initial_probe_task:
             self._initial_probe_task = asyncio.create_task(self._initial_probe())
         self._poll_task = asyncio.create_task(self._poll_loop())
@@ -1266,6 +1626,8 @@ class OperatorService:
                     "command": self._poll_command,
                     "error": str(exc),
                 }
+                if self._ws_auto_enabled:
+                    await self._maybe_discover_wifi_endpoint()
                 if (
                     self._control_mode == TRANSPORT_AUTO
                     and not self._initial_probe_task

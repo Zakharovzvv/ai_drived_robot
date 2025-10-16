@@ -1,48 +1,95 @@
 import { useCallback, useMemo } from "react";
 import { useOperator } from "../state/OperatorProvider.jsx";
 
-function computeStatus(headerStatus) {
+function extractEndpointHost(endpoint) {
+  if (!endpoint || typeof endpoint !== "string") {
+    return "";
+  }
+  const match = endpoint.match(/^[a-z]+:\/\/([^/]+)/i);
+  if (match && match[1]) {
+    return match[1];
+  }
+  if (endpoint.startsWith("//")) {
+    return endpoint.slice(2).split("/")[0] || "";
+  }
+  return endpoint.split("/")[0];
+}
+
+function formatTransportLabel(transport, summary) {
+  if (!transport) {
+    if (summary?.transportLabel) {
+      return summary.transportLabel;
+    }
+    if (summary?.transportId) {
+      return summary.transportId.toUpperCase();
+    }
+    return "Control Link";
+  }
+
+  const endpoint = transport.endpoint || summary?.endpoint || "";
+  const host = extractEndpointHost(endpoint);
+
+  if (transport.id === "wifi") {
+    return `Wi-Fi${host ? ` (${host})` : ""}`;
+  }
+  if (transport.id === "serial") {
+    return host ? `UART (${host})` : "UART";
+  }
+  return transport.label || (transport.id ? transport.id.toUpperCase() : "Control Link");
+}
+
+function computeStatus(headerStatus, controlOverview) {
   const classNames = ["status-indicator"];
   let text = "Connecting...";
 
-  if (!headerStatus) {
+  const summary = controlOverview?.summary;
+  const phase = summary?.phase ?? headerStatus?.phase ?? "connecting";
+
+  if (phase === "disconnected") {
+    classNames.push("disconnected");
+    return { className: classNames.join(" "), text: "Server Link Lost" };
+  }
+
+  const primaryTransport = controlOverview?.primaryTransport || controlOverview?.activeTransport || null;
+
+  if (summary?.status === "online" && primaryTransport) {
+    const label = formatTransportLabel(primaryTransport, summary);
+    if (summary?.stale) {
+      classNames.push("warn");
+      text = `Robot Online • ${label} (status stale)`;
+    } else {
+      classNames.push("connected");
+      text = `Robot Online • ${label}`;
+    }
+    return { className: classNames.join(" "), text };
+  }
+
+  if (summary?.status === "connecting" || phase === "connecting") {
     classNames.push("connecting");
     return { className: classNames.join(" "), text };
   }
 
-  const { phase, robotConnected, medium, ip, stale } = headerStatus;
-
-  if (phase === "disconnected") {
-    classNames.push("disconnected");
-    text = "Server Link Lost";
-  } else if (!robotConnected) {
-    if (phase === "connecting") {
-      classNames.push("connecting");
-      text = "Connecting...";
-    } else {
-      classNames.push("disconnected");
-      text = "Robot Offline";
-    }
-  } else if (stale) {
-    classNames.push("warn");
-    text = "Robot Status Stale";
-  } else {
-    classNames.push("connected");
-    if (medium === "wifi") {
-      text = `Robot Online • Wi-Fi${ip ? ` (${ip})` : ""}`;
-    } else if (medium === "type-c") {
-      text = "Robot Online • Type-C";
-    } else {
-      text = "Robot Online";
-    }
+  if (headerStatus?.robotConnected) {
+    const medium = headerStatus.medium;
+    const label =
+      medium === "wifi"
+        ? `Wi-Fi${headerStatus.ip ? ` (${headerStatus.ip})` : ""}`
+        : medium === "type-c"
+        ? "UART"
+        : "Control Link";
+    const stale = headerStatus.stale;
+    classNames.push(stale ? "warn" : "connected");
+    text = `Robot Online • ${label}${stale ? " (status stale)" : ""}`;
+    return { className: classNames.join(" "), text };
   }
 
-  return { className: classNames.join(" "), text };
+  classNames.push("disconnected");
+  return { className: classNames.join(" "), text: "Robot Offline" };
 }
 
 export default function Header() {
-  const { headerStatus, controlState, controlModePending, changeControlTransport } = useOperator();
-  const status = useMemo(() => computeStatus(headerStatus), [headerStatus]);
+  const { headerStatus, controlOverview, controlState, controlModePending, changeControlTransport } = useOperator();
+  const status = useMemo(() => computeStatus(headerStatus, controlOverview), [headerStatus, controlOverview]);
   const transports = controlState?.transports ?? [];
   const activeMode = controlState?.mode ?? "auto";
 

@@ -89,6 +89,25 @@ class ControlState(BaseModel):
     transports: List[TransportDescriptor]
 
 
+class WifiConfigResponse(BaseModel):
+    mac_address: Optional[str] = None
+    mac_prefix: Optional[str] = None
+    ip_address: Optional[str] = None
+    ws_port: Optional[int] = None
+    ws_path: Optional[str] = None
+    endpoint: Optional[str] = None
+    transport_available: bool = False
+    auto_discovery: bool = True
+
+
+class WifiConfigUpdate(BaseModel):
+    mac_address: Optional[str] = None
+    mac_prefix: Optional[str] = None
+    ip_address: Optional[str] = None
+    ws_port: Optional[int] = None
+    ws_path: Optional[str] = None
+
+
 __all__ = [
     "CameraConfigResponse",
     "CameraConfigUpdate",
@@ -96,6 +115,8 @@ __all__ = [
     "CommandResponse",
     "ControlState",
     "ControlTransportUpdate",
+    "WifiConfigResponse",
+    "WifiConfigUpdate",
     "ShelfMapPaletteEntry",
     "ShelfMapResetRequest",
     "ShelfMapResponse",

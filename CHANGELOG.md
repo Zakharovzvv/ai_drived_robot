@@ -1,5 +1,12 @@
 # Changelog
 
+## [2025-10-16]
+
+### Frontend
+
+- Unified control-transport status across the operator console: the header badge, Control Link card, and Wi-Fi settings now share a single state source from `OperatorProvider`, so transport availability and endpoints stay in sync regardless of where they are viewed.
+- Refined Wi-Fi settings messaging to reflect live transport data, clarifying when the link is online, on standby for failover, or waiting for discovery.
+
 ## [2025-10-15]
 
 ### Documentation & Architecture
