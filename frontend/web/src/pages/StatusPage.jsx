@@ -126,18 +126,9 @@ function buildCards(diagnostics) {
   const esp32Status = anyServiceConnected ? "Online" : "Offline";
   const esp32Tone = anyServiceConnected ? "ok" : "error";
 
-  // ESP32 System Info
-  const esp32SystemInfo = statusFresh
-    ? [
-        status.vbatt_mV !== undefined && `Battery: ${status.vbatt_mV} mV`,
-        status.line_left !== undefined &&
-          status.line_right !== undefined &&
-          `Line: L${status.line_left}/R${status.line_right}`,
-        status.odo_left !== undefined &&
-          status.odo_right !== undefined &&
-          `Odometry: L${status.odo_left}/R${status.odo_right}`,
-      ].filter(Boolean)
-    : [];
+  // ESP32 System Info - ESP32 specific data only
+  const esp32SystemInfo = [];
+  // ESP32 doesn't have its own sensors - all sensor data comes from UNO via I2C
 
   // Build UNO services
   const unoServices = [];
