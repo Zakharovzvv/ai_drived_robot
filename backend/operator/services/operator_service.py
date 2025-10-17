@@ -71,6 +71,8 @@ class OperatorService:
         self._transport_endpoints: Dict[str, Optional[str]] = {}
         self._transport_health: Dict[str, Dict[str, Any]] = {}
         self._transport_probe_at: Dict[str, float] = {}
+        self._serial_probe_task: Optional[asyncio.Task[None]] = None
+        self._serial_probe_next = 0.0
         self._transport_retry_cooldown = DEFAULT_TRANSPORT_RETRY_COOLDOWN
         cooldown_env = os.getenv("OPERATOR_TRANSPORT_RETRY_COOLDOWN")
         if cooldown_env:
@@ -109,6 +111,33 @@ class OperatorService:
             except ValueError:
                 logger.warning("Invalid OPERATOR_SERIAL_TIMEOUT=%s; using %s", env_timeout, timeout)
         self._serial_timeout = timeout_override
+
+        probe_interval_env = os.getenv("OPERATOR_SERIAL_PROBE_INTERVAL")
+        self._serial_probe_interval = 5.0
+        if probe_interval_env:
+            try:
+                self._serial_probe_interval = max(1.0, float(probe_interval_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid OPERATOR_SERIAL_PROBE_INTERVAL=%s; using %.1f",
+                    probe_interval_env,
+                    self._serial_probe_interval,
+                )
+
+        probe_timeout_env = os.getenv("OPERATOR_SERIAL_PROBE_TIMEOUT")
+        default_probe_timeout = min(self._serial_timeout, 1.5)
+        self._serial_probe_timeout = default_probe_timeout
+        if probe_timeout_env:
+            try:
+                candidate = float(probe_timeout_env)
+            except ValueError:
+                logger.warning(
+                    "Invalid OPERATOR_SERIAL_PROBE_TIMEOUT=%s; using %.1f",
+                    probe_timeout_env,
+                    default_probe_timeout,
+                )
+            else:
+                self._serial_probe_timeout = max(0.2, min(self._serial_timeout, candidate))
 
         transport_override = control_transport
         if transport_override is None:
@@ -788,6 +817,8 @@ class OperatorService:
         timestamp = time.time()
         state["last_success"] = timestamp
         self._transport_probe_at[transport] = timestamp
+        if transport == TRANSPORT_SERIAL:
+            self._serial_probe_next = max(self._serial_probe_next, timestamp + self._serial_probe_interval)
 
     def _record_transport_failure(self, transport: str, error: str) -> None:
         state = self._transport_health.setdefault(
@@ -799,6 +830,8 @@ class OperatorService:
         timestamp = time.time()
         state["last_failure"] = timestamp
         self._transport_probe_at[transport] = timestamp
+        if transport == TRANSPORT_SERIAL:
+            self._serial_probe_next = min(timestamp + 1.0, timestamp + self._serial_probe_interval)
 
         if transport == TRANSPORT_WIFI:
             should_enable_auto = False
@@ -873,7 +906,50 @@ class OperatorService:
                 if endpoint_hint:
                     self._transport_endpoints[TRANSPORT_SERIAL] = endpoint_hint
 
+            self._transport_probe_at[TRANSPORT_SERIAL] = now
+            self._serial_probe_next = min(self._serial_probe_next, now)
+
+    def _maybe_schedule_serial_probe(self) -> None:
+        if self._stop_event.is_set():
+            return
+        if TRANSPORT_SERIAL not in self._transports:
+            return
+        if self._control_mode == TRANSPORT_SERIAL:
+            return
+        if self._active_transport == TRANSPORT_SERIAL:
+            return
+        if self._serial_probe_task and not self._serial_probe_task.done():
+            return
+
+        now = time.time()
+        if now < self._serial_probe_next:
+            return
+
+        self._serial_probe_next = now + self._serial_probe_interval
+        self._serial_probe_task = asyncio.create_task(self._run_serial_probe())
+
+    async def _run_serial_probe(self) -> None:
+        link = self._transports.get(TRANSPORT_SERIAL)
+        if not link:
+            self._serial_probe_task = None
+            return
+
+        try:
+            await asyncio.to_thread(
+                link.run_command,
+                self._poll_command,
+                timeout=self._serial_probe_timeout,
+                raise_on_error=False,
+            )
+        except SerialNotFoundError as exc:
+            self._record_transport_failure(TRANSPORT_SERIAL, str(exc))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Serial connectivity probe failed", exc_info=True)
+            self._record_transport_failure(TRANSPORT_SERIAL, str(exc))
+        else:
             self._record_transport_success(TRANSPORT_SERIAL)
+        finally:
+            self._serial_probe_task = None
 
     def _should_skip_transport(self, transport: str) -> bool:
         if self._control_mode != TRANSPORT_AUTO:
@@ -1006,6 +1082,12 @@ class OperatorService:
             await self._maybe_discover_wifi_endpoint(force=True)
         if self._control_mode == TRANSPORT_AUTO and not self._initial_probe_task:
             self._initial_probe_task = asyncio.create_task(self._initial_probe())
+        self._serial_probe_next = 0.0
+        if self._serial_probe_task and not self._serial_probe_task.done():
+            self._serial_probe_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._serial_probe_task
+        self._serial_probe_task = None
         self._poll_task = asyncio.create_task(self._poll_loop())
         self._log_task = asyncio.create_task(self._log_loop())
 
@@ -1020,6 +1102,11 @@ class OperatorService:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._initial_probe_task
             self._initial_probe_task = None
+        if self._serial_probe_task:
+            self._serial_probe_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._serial_probe_task
+            self._serial_probe_task = None
         for link in set(self._transports.values()):
             await asyncio.to_thread(link.close)
         self._poll_task = None
@@ -1652,8 +1739,13 @@ class OperatorService:
         if active_port is None:
             active_port = self._transport_endpoints.get(TRANSPORT_SERIAL)
         diag["serial"]["active_port"] = active_port
-        diag["serial"]["connected"] = bool(active_port and status_fresh)
-        diag["serial"]["stale"] = not status_fresh
+        serial_health = self._transport_health.get(TRANSPORT_SERIAL, {})
+        serial_available = bool(serial_health.get("available"))
+        diag["serial"]["available"] = serial_available
+        diag["serial"]["connected"] = bool(serial_available and active_port)
+        diag["serial"]["stale"] = not serial_available or not status_fresh
+        diag["serial"]["last_success"] = serial_health.get("last_success")
+        diag["serial"]["last_failure"] = serial_health.get("last_failure")
         diag["serial"]["status_age_s"] = (
             None
             if self._last_status_timestamp is None
@@ -1882,6 +1974,8 @@ class OperatorService:
                 }
 
             await self._broadcast(payload)
+
+            self._maybe_schedule_serial_probe()
 
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self._poll_interval)
