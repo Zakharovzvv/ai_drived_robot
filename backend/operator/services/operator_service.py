@@ -1091,6 +1091,16 @@ class OperatorService:
         }
 
     def camera_configured(self) -> bool:
+        if self._camera_snapshot_override:
+            return True
+
+        snapshot = self._effective_status_snapshot()
+        if snapshot and any(snapshot.get(key) for key in ("cam_resolution", "cam_quality", "cam_max")):
+            return True
+
+        if self._cached_camera_max_resolution:
+            return True
+
         snapshot_url, _ = self._resolve_camera_snapshot()
         return snapshot_url is not None
 
@@ -1469,23 +1479,42 @@ class OperatorService:
             return self._camera_transport
 
         snapshot_url, _ = self._resolve_camera_snapshot()
-        if not snapshot_url:
-            return "unconfigured"
+        if snapshot_url:
+            try:
+                parsed = urlparse(snapshot_url)
+            except ValueError:  # pragma: no cover - defensive
+                return "unknown"
 
-        try:
-            parsed = urlparse(snapshot_url)
-        except ValueError:  # pragma: no cover - defensive
+            scheme = (parsed.scheme or "").lower()
+            host = (parsed.hostname or "").lower()
+
+            if scheme in {"http", "https", "rtsp", "rtsps"}:
+                if host in {"localhost", "127.0.0.1", "::1"}:
+                    return "type-c"
+                return "wifi"
+
             return "unknown"
 
-        scheme = (parsed.scheme or "").lower()
-        host = (parsed.hostname or "").lower()
+        snapshot = self._effective_status_snapshot()
+        if snapshot:
+            ip_candidate = snapshot.get("wifi_ip") or snapshot.get("wifi_ip_addr")
+            if ip_candidate:
+                return "wifi"
 
-        if scheme in {"http", "https", "rtsp", "rtsps"}:
-            if host in {"localhost", "127.0.0.1", "::1"}:
-                return "type-c"
+            if snapshot.get("cam_streaming") is not None:
+                serial_link = self._transports.get(TRANSPORT_SERIAL)
+                if isinstance(serial_link, ESP32Link) and (
+                    serial_link.active_port or serial_link.requested_port
+                ):
+                    return "type-c"
+
+        if self._ws_static_endpoint or self._wifi_user_ip:
             return "wifi"
 
-        return "unknown"
+        if TRANSPORT_WIFI in self._transports and self._transport_endpoints.get(TRANSPORT_WIFI):
+            return "wifi"
+
+        return "unconfigured"
 
     async def diagnostics(self) -> dict[str, Any]:
         info = self.describe()
@@ -1602,7 +1631,11 @@ class OperatorService:
         diag["uno"]["seq_ack"] = snapshot.get("seq_ack") if status_fresh else None
 
         snapshot_url, source = self._resolve_camera_snapshot(status=snapshot if status_fresh else None)
-        diag["camera"]["configured"] = snapshot_url is not None
+        configured = snapshot_url is not None
+        if status_fresh and any(snapshot.get(field) for field in ("cam_resolution", "cam_quality", "cam_max")):
+            configured = True
+
+        reachable = False
         diag["camera"]["snapshot_url"] = snapshot_url
         diag["camera"]["streaming"] = bool(status_fresh and snapshot.get("cam_streaming"))
         diag["camera"]["source"] = source
@@ -1612,6 +1645,8 @@ class OperatorService:
         try:
             camcfg = await self.camera_get_config()
             if isinstance(camcfg, dict):
+                reachable = True
+                configured = True
                 diag["camera"]["resolution"] = camcfg.get("resolution") or diag["camera"].get("resolution")
                 diag["camera"]["quality"] = (
                     camcfg.get("quality") if camcfg.get("quality") is not None else diag["camera"].get("quality")
@@ -1626,6 +1661,11 @@ class OperatorService:
             pass
         except Exception:
             logger.exception("Failed to fetch camera config for diagnostics")
+
+        diag["camera"]["configured"] = configured
+        if reachable:
+            diag["camera"]["reachable"] = True
+        diag["camera"]["transport"] = self._determine_camera_transport()
 
         diag["meta"] = {
             "status_fresh": status_fresh,

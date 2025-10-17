@@ -15,6 +15,11 @@ class DummyLink:
         return
 
 
+def install_dummy_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(operator_service, "ESP32Link", DummyLink, raising=False)
+    monkeypatch.setattr(operator_service, "ESP32WSLink", DummyLink, raising=False)
+
+
 @pytest.mark.asyncio
 async def test_camera_config_get_returns_defaults(monkeypatch):
     async def fake_camera_get_config():
@@ -44,8 +49,7 @@ async def test_camera_config_get_returns_defaults(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_operator_service_camera_options_mark_supported(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(operator_service, "ESP32Link", lambda *args, **kwargs: DummyLink(*args, **kwargs))
-    monkeypatch.setattr(operator_service, "ESP32WSLink", lambda *args, **kwargs: DummyLink(*args, **kwargs))
+    install_dummy_links(monkeypatch)
 
     svc = operator_service.OperatorService(port="socket://stub", control_transport="serial")
 
@@ -75,8 +79,7 @@ async def test_operator_service_camera_options_mark_supported(monkeypatch: pytes
 
 @pytest.mark.asyncio
 async def test_camera_set_config_error_includes_resolution_details(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(operator_service, "ESP32Link", lambda *args, **kwargs: DummyLink(*args, **kwargs))
-    monkeypatch.setattr(operator_service, "ESP32WSLink", lambda *args, **kwargs: DummyLink(*args, **kwargs))
+    install_dummy_links(monkeypatch)
 
     svc = operator_service.OperatorService(port="socket://stub", control_transport="serial")
 
@@ -99,3 +102,41 @@ async def test_camera_set_config_error_includes_resolution_details(monkeypatch: 
     message = str(excinfo.value)
     assert "SVGA" in message
     assert "QVGA" in message
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_marks_camera_configured_when_stream_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_dummy_links(monkeypatch)
+
+    service_instance = operator_service.OperatorService(port="socket://stub", control_transport="serial")
+
+    async def fake_run_command(self, command: str, *, raise_on_error: bool = True):
+        normalized = command.strip().upper()
+        if normalized == "STATUS":
+            return CommandResult(
+                raw=["status=ok"],
+                data={
+                    "cam_streaming": False,
+                    "wifi_connected": True,
+                    "wifi_ip": "192.168.0.72",
+                    "cam_resolution": "QQVGA",
+                    "cam_quality": 12,
+                    "cam_max": "UXGA",
+                },
+            )
+        if normalized == "CAMCFG ?":
+            return CommandResult(
+                raw=["cam_resolution=QQVGA cam_quality=12 cam_max=UXGA"],
+                data={"cam_resolution": "QQVGA", "cam_quality": 12, "cam_max": "UXGA"},
+            )
+        raise AssertionError(f"Unexpected command {command}")
+
+    monkeypatch.setattr(operator_service.OperatorService, "run_command", fake_run_command, raising=False)
+
+    diagnostics = await service_instance.diagnostics()
+
+    camera_snapshot = diagnostics.get("camera", {})
+    assert camera_snapshot.get("configured") is True
+    assert camera_snapshot.get("reachable") is True
+    assert camera_snapshot.get("transport") == "wifi"
+    assert camera_snapshot.get("streaming") is False

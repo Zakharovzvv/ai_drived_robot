@@ -21,6 +21,7 @@ const OperatorContext = createContext(null);
 const TELEMETRY_WS_PATH = "/ws/telemetry";
 const CAMERA_WS_PATH = "/ws/camera";
 const LOG_WS_PATH = "/ws/logs";
+const CAMERA_DISABLED_MESSAGE = "Camera stream disabled. Use Enable Stream above.";
 
 function withBase(path) {
   return `${API_BASE}${path}`;
@@ -1116,10 +1117,16 @@ export function OperatorProvider({ children }) {
       return;
     }
     if (cameraState.source !== "override" && cameraState.streaming === false) {
-      updateCameraState({ error: "Camera stream disabled. Use Enable Stream above." });
+      if (cameraState.error === CAMERA_DISABLED_MESSAGE) {
+        updateCameraState({ error: null, frame: null });
+      } else {
+        updateCameraState({ frame: null });
+      }
       return;
     }
-    updateCameraState({ error: cameraState.error === "Camera stream disabled. Use Enable Stream above." ? null : cameraState.error });
+    if (cameraState.error === CAMERA_DISABLED_MESSAGE) {
+      updateCameraState({ error: null });
+    }
     const socket = new WebSocket(buildWsUrl(CAMERA_WS_PATH));
     cameraSocketRef.current = socket;
     socket.addEventListener("message", (event) => {

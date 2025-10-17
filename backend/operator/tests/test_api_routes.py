@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -57,7 +57,10 @@ class _StubService:
         }
 
     async def diagnostics(self) -> dict[str, Any]:
-        return {"meta": {"status_fresh": True}, "camera": self._camera_config}
+        camera_snapshot = dict(self._camera_config)
+        camera_snapshot.setdefault("configured", True)
+        camera_snapshot.setdefault("transport", "wifi")
+        return {"meta": {"status_fresh": True}, "camera": camera_snapshot}
 
     async def shelf_get_map(self) -> dict[str, Any]:
         return {
@@ -82,7 +85,7 @@ class _ErrorService(_StubService):
 
 
 @pytest_asyncio.fixture(name="client")
-async def client_fixture() -> AsyncClient:
+async def client_fixture() -> AsyncGenerator[AsyncClient, None]:
     service = _StubService()
 
     async def _override() -> _StubService:
