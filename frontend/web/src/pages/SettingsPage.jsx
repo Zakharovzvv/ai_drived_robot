@@ -43,6 +43,10 @@ function formatTimestamp(value) {
   return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
 }
 
+// ====================
+// CONTROL TRANSPORT SETTINGS
+// ====================
+
 function ControlTransportSettings() {
   const { controlState, controlModePending, changeControlTransport, fetchControlState } = useOperator();
   const transports = controlState?.transports ?? [];
@@ -71,39 +75,26 @@ function ControlTransportSettings() {
   return (
     <article className="settings-card" data-device="control-link">
       <header>
-        <h3>Control Link</h3>
-        <p>Manage Wi-Fi and UART command channels for the robot.</p>
+        <h3>Control Transport</h3>
+        <p>Select communication channel for robot commands.</p>
       </header>
       <div className="transport-settings-summary">
         <div className="transport-summary-card">
-          <span className="summary-label">Preferred Mode</span>
+          <span className="summary-label">Mode</span>
           <span className="summary-value">{preferredLabel}</span>
         </div>
         <div className="transport-summary-card">
-          <span className="summary-label">Active Channel</span>
+          <span className="summary-label">Active</span>
           <span className="summary-value">{activeTransport ? activeTransport.label : "Pending"}</span>
-          {activeTransport?.endpoint ? (
-            <span className="summary-subtle">{activeTransport.endpoint}</span>
-          ) : null}
-        </div>
-        <div className="transport-summary-card summary-actions">
-          <button
-            type="button"
-            className="btn-secondary btn-sm"
-            onClick={handleRefresh}
-            disabled={controlModePending}
-          >
-            {controlModePending ? "Checking..." : "Refresh Status"}
-          </button>
         </div>
       </div>
       <ul className="transport-status-list">
         <li className="transport-status-item" data-active={activeMode === "auto"}>
           <div className="transport-status-header">
             <div>
-              <span className="transport-name">Automatic Selection</span>
+              <span className="transport-name">Automatic</span>
               <span className={autoBadgeClass}>
-                Prefers Wi-Fi, falls back to UART
+                Wi-Fi → UART
               </span>
             </div>
             <div className="transport-actions">
@@ -113,23 +104,12 @@ function ControlTransportSettings() {
                 onClick={() => handleSwitch("auto")}
                 disabled={controlModePending || activeMode === "auto"}
               >
-                {activeMode === "auto" ? "Selected" : "Use Auto"}
+                {activeMode === "auto" ? "Active" : "Use Auto"}
               </button>
             </div>
           </div>
-          <div className="transport-meta">
-            <span>Attempts Wi-Fi first, then retries via UART if needed.</span>
-          </div>
         </li>
         {transports.map((transport) => {
-          const meta = [];
-          if (transport.endpoint) {
-            meta.push(`Endpoint: ${transport.endpoint}`);
-          }
-          meta.push(`Last success: ${formatTimestamp(transport.last_success)}`);
-          if (transport.last_failure) {
-            meta.push(`Last failure: ${formatTimestamp(transport.last_failure)}`);
-          }
           const classes = [
             "transport-badge",
             transport.available ? "online" : "offline",
@@ -144,7 +124,7 @@ function ControlTransportSettings() {
                   <span className="transport-name">{transport.label || transport.id.toUpperCase()}</span>
                   <span className={classes}>
                     <span className="badge-dot" />
-                    {transport.available ? "Online" : "Unavailable"}
+                    {transport.available ? "Online" : "Offline"}
                   </span>
                 </div>
                 <div className="transport-actions">
@@ -154,308 +134,148 @@ function ControlTransportSettings() {
                     onClick={() => handleSwitch(transport.id)}
                     disabled={controlModePending || activeMode === transport.id}
                   >
-                    {activeMode === transport.id ? "Selected" : `Use ${transport.label || transport.id.toUpperCase()}`}
+                    {activeMode === transport.id ? "Active" : "Use"}
                   </button>
                 </div>
-              </div>
-              <div className="transport-meta">
-                {meta.map((entry) => (
-                  <span key={entry}>{entry}</span>
-                ))}
               </div>
             </li>
           );
         })}
-        {transports.length === 0 ? (
-          <li className="transport-status-item empty">Transport details are not available yet.</li>
-        ) : null}
       </ul>
-      <p className="transport-settings-hint">
-        Switch the preferred transport from the header or by using the buttons above. Manual overrides trigger a
-        new health check immediately.
-      </p>
+      <div className="settings-actions">
+        <button type="button" className="btn-secondary btn-sm" onClick={handleRefresh} disabled={controlModePending}>
+          {controlModePending ? "Checking..." : "Refresh"}
+        </button>
+      </div>
     </article>
   );
 }
 
+// ====================
+// WI-FI SETTINGS
+// ====================
+
 function WifiSettings() {
-  const {
-    controlOverview,
-    wifiConfig,
-    wifiStatus,
-    wifiLoading,
-    wifiSaving,
-    loadWifiConfig,
-    applyWifiConfig,
-  } = useOperator();
-
-  const [form, setForm] = useState({
-    macAddress: wifiConfig?.macAddress || "",
-    macPrefix: wifiConfig?.macPrefix || "",
-    ipAddress: wifiConfig?.ipAddress || "",
-    wsPort: wifiConfig?.wsPort != null ? `${wifiConfig.wsPort}` : "",
-    wsPath: wifiConfig?.wsPath || "",
-  });
-
-  const wifiTransport = useMemo(() => {
-    return controlOverview?.transports?.find((entry) => entry.id === "wifi") || null;
-  }, [controlOverview]);
+  const { wifiConfig, setWifiConfig, setPersistWifi, connectWifi, resetWifi } = useOperator();
+  const [localConfig, setLocalConfig] = useState(() => ({
+    mac: wifiConfig?.mac ?? "",
+    ip: wifiConfig?.ip ?? "",
+    port: wifiConfig?.port ?? 8080,
+    path: wifiConfig?.path ?? "",
+  }));
 
   useEffect(() => {
-    loadWifiConfig({ silent: Boolean(wifiConfig) }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!wifiConfig) {
-      return;
-    }
-    setForm({
-      macAddress: wifiConfig.macAddress || "",
-      macPrefix: wifiConfig.macPrefix || "",
-      ipAddress: wifiConfig.ipAddress || "",
-      wsPort: wifiConfig.wsPort != null ? `${wifiConfig.wsPort}` : "",
-      wsPath: wifiConfig.wsPath || "",
+    setLocalConfig({
+      mac: wifiConfig?.mac ?? "",
+      ip: wifiConfig?.ip ?? "",
+      port: wifiConfig?.port ?? 8080,
+      path: wifiConfig?.path ?? "",
     });
   }, [wifiConfig]);
 
-  const handleChange = useCallback(
-    (field, sanitizer = (value) => value) => (event) => {
-      const nextValue = sanitizer(event.target.value);
-      setForm((prev) => ({ ...prev, [field]: nextValue }));
+  const isOnline = Boolean(wifiConfig?.online);
+
+  const handleConnect = useCallback(
+    (e) => {
+      e.preventDefault();
+      const payload = {
+        ...localConfig,
+        port: Number(localConfig.port),
+      };
+      setWifiConfig(payload);
+      connectWifi().catch(() => {});
     },
-    []
+    [localConfig, setWifiConfig, connectWifi]
   );
 
-  const sanitizeMac = useCallback((value) => value.toUpperCase().replace(/[^0-9A-F:]/g, ""), []);
-  const sanitizePath = useCallback((value) => value.trim(), []);
-  const sanitizeText = useCallback((value) => value.trim(), []);
-
-  const hasChanges = useMemo(() => {
-    if (!wifiConfig) {
-      return Boolean(
-        form.macAddress || form.macPrefix || form.ipAddress || form.wsPort || form.wsPath
-      );
-    }
-    const same = (left, right) => (left || "") === (right || "");
-    if (!same(form.macAddress.trim().toUpperCase(), (wifiConfig.macAddress || "").toUpperCase())) {
-      return true;
-    }
-    if (!same(form.macPrefix.trim().toUpperCase(), (wifiConfig.macPrefix || "").toUpperCase())) {
-      return true;
-    }
-    if (!same(form.ipAddress.trim(), wifiConfig.ipAddress || "")) {
-      return true;
-    }
-    if (!same(form.wsPort.trim(), wifiConfig.wsPort != null ? `${wifiConfig.wsPort}` : "")) {
-      return true;
-    }
-    if (!same(form.wsPath.trim(), wifiConfig.wsPath || "")) {
-      return true;
-    }
-    return false;
-  }, [form, wifiConfig]);
-
-  const connectionSummary = useMemo(() => {
-    if (!wifiTransport && !wifiConfig) {
-      return {
-        badge: "transport-badge",
-        label: "Pending",
-        detail: "Refresh to load current Wi-Fi state.",
+  const handlePersist = useCallback(
+    (e) => {
+      e.preventDefault();
+      const payload = {
+        ...localConfig,
+        port: Number(localConfig.port),
       };
-    }
+      setWifiConfig(payload);
+      setPersistWifi(payload).catch(() => {});
+    },
+    [localConfig, setWifiConfig, setPersistWifi]
+  );
 
-    if (wifiTransport?.available) {
-      const endpoint = wifiTransport.endpoint || wifiConfig?.endpoint;
-      const activeId = controlOverview?.primaryTransport?.id;
-      const detail = endpoint || (activeId && activeId !== "wifi" ? "Available for failover" : "Wi-Fi control link ready");
-      return {
-        badge: "transport-badge online",
-        label: "Online",
-        detail,
-      };
-    }
+  const handleReset = useCallback(() => {
+    resetWifi().catch(() => {});
+  }, [resetWifi]);
 
-    const detail =
-      wifiStatus?.message ||
-      (wifiConfig?.autoDiscovery ? "Awaiting ESP32 broadcast" : "Provide ESP32 IP to connect");
-
-    return {
-      badge: wifiTransport ? "transport-badge offline" : "transport-badge",
-      label: wifiTransport ? "Offline" : "Pending",
-      detail,
-    };
-  }, [wifiTransport, wifiConfig, wifiStatus, controlOverview]);
-
-  const wifiEndpoint = wifiTransport?.endpoint || wifiConfig?.endpoint || "";
-  const endpointDetail = (() => {
-    if (wifiTransport?.available) {
-      return wifiEndpoint ? "Live endpoint from ESP32" : "Wi-Fi transport ready";
-    }
-    if (wifiConfig) {
-      return wifiConfig.autoDiscovery ? "Auto discovery enabled" : "Static override active";
-    }
-    return "Refresh to load current state";
-  })();
-
-  const disableInputs = wifiSaving;
-  const disableActions = wifiLoading || wifiSaving;
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    const changes = {};
-    if (!wifiConfig || form.macAddress.trim().toUpperCase() !== (wifiConfig.macAddress || "").toUpperCase()) {
-      changes.macAddress = form.macAddress;
-    }
-    if (!wifiConfig || form.macPrefix.trim().toUpperCase() !== (wifiConfig.macPrefix || "").toUpperCase()) {
-      changes.macPrefix = form.macPrefix;
-    }
-    if (!wifiConfig || form.ipAddress.trim() !== (wifiConfig.ipAddress || "")) {
-      changes.ipAddress = form.ipAddress;
-    }
-    if (!wifiConfig || form.wsPort.trim() !== (wifiConfig.wsPort != null ? `${wifiConfig.wsPort}` : "")) {
-      changes.wsPort = form.wsPort;
-    }
-    if (!wifiConfig || form.wsPath.trim() !== (wifiConfig.wsPath || "")) {
-      changes.wsPath = form.wsPath;
-    }
-    try {
-      await applyWifiConfig(changes);
-    } catch {
-      // handled by provider
-    }
-  };
-
-  const handleAutoDiscovery = () => {
-    setForm((prev) => ({ ...prev, ipAddress: "", wsPort: "", wsPath: "" }));
-    applyWifiConfig({ ipAddress: null, wsPort: null, wsPath: null }).catch(() => {});
-  };
+  const handleFieldChange = useCallback((field, value) => {
+    setLocalConfig((prev) => ({ ...prev, [field]: value }));
+  }, []);
 
   return (
     <article className="settings-card" data-device="wifi">
       <header>
-        <h3>Wi-Fi Control Link</h3>
-        <p>Configure how the operator connects to the ESP32 over the network.</p>
+        <h3>Wi-Fi Network</h3>
+        <p>Configure ESP32 network settings for wireless control.</p>
       </header>
-      <div className="transport-settings-summary">
-        <div className="transport-summary-card">
-          <span className="summary-label">Endpoint</span>
-          <span className="summary-value">{wifiEndpoint || "Not configured"}</span>
-          <span className="summary-subtle">{endpointDetail}</span>
-        </div>
-        <div className="transport-summary-card">
-          <span className="summary-label">Link State</span>
-          <span className={connectionSummary.badge}>
-            <span className="badge-dot" />
-            {connectionSummary.label}
-          </span>
-          <span className="summary-subtle">{connectionSummary.detail}</span>
-        </div>
+      <div className="wifi-status-summary">
+        <span className={`wifi-status-badge ${isOnline ? "online" : "offline"}`}>
+          <span className="badge-dot" />
+          {isOnline ? "Connected" : "Disconnected"}
+        </span>
+        {isOnline && wifiConfig?.ip && (
+          <span className="wifi-endpoint">ws://{wifiConfig.ip}:{wifiConfig.port}{wifiConfig.path || ""}</span>
+        )}
       </div>
-      <form className="settings-form" onSubmit={handleSubmit}>
-        <div className="settings-field">
-          <label htmlFor="wifi-mac-address">ESP32 MAC Address</label>
-          <input
-            id="wifi-mac-address"
-            name="macAddress"
-            type="text"
-            value={form.macAddress}
-            onChange={handleChange("macAddress", sanitizeMac)}
-            disabled={disableInputs}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="CC:BA:97:12:34:56"
-          />
-          <p className="settings-hint">Used for auto-discovery when the robot advertises its IP.</p>
+      <form className="wifi-form" onSubmit={handleConnect}>
+        <div className="form-row">
+          <label>
+            <span>MAC Address</span>
+            <input
+              type="text"
+              placeholder="AA:BB:CC:DD:EE:FF"
+              value={localConfig.mac}
+              onChange={(e) => handleFieldChange("mac", e.target.value)}
+            />
+          </label>
+          <label>
+            <span>IP Address</span>
+            <input
+              type="text"
+              placeholder="192.168.0.100"
+              value={localConfig.ip}
+              onChange={(e) => handleFieldChange("ip", e.target.value)}
+            />
+          </label>
         </div>
-        <div className="settings-field">
-          <label htmlFor="wifi-mac-prefix">MAC Prefix</label>
-          <input
-            id="wifi-mac-prefix"
-            name="macPrefix"
-            type="text"
-            value={form.macPrefix}
-            onChange={handleChange("macPrefix", sanitizeMac)}
-            disabled={disableInputs}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="CC:BA:97"
-          />
-          <p className="settings-hint">Provide if multiple robots share a similar prefix.</p>
-        </div>
-        <div className="settings-field">
-          <label htmlFor="wifi-ip-address">Static ESP32 IP</label>
-          <input
-            id="wifi-ip-address"
-            name="ipAddress"
-            type="text"
-            value={form.ipAddress}
-            onChange={handleChange("ipAddress", sanitizeText)}
-            disabled={disableInputs}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="192.168.4.1"
-          />
-          <p className="settings-hint">Leave blank to rely on discovery or cached endpoints.</p>
-        </div>
-        <div className="settings-field">
-          <label htmlFor="wifi-ws-port">WebSocket Port</label>
-          <input
-            id="wifi-ws-port"
-            name="wsPort"
-            type="number"
-            min="1"
-            max="65535"
-            value={form.wsPort}
-            onChange={handleChange("wsPort")}
-            disabled={disableInputs}
-            placeholder="81"
-          />
-        </div>
-        <div className="settings-field">
-          <label htmlFor="wifi-ws-path">WebSocket Path</label>
-          <input
-            id="wifi-ws-path"
-            name="wsPath"
-            type="text"
-            value={form.wsPath}
-            onChange={handleChange("wsPath", sanitizePath)}
-            disabled={disableInputs}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="/ws/cli"
-          />
+        <div className="form-row">
+          <label>
+            <span>Port</span>
+            <input
+              type="number"
+              placeholder="8080"
+              value={localConfig.port}
+              onChange={(e) => handleFieldChange("port", e.target.value)}
+            />
+          </label>
+          <label>
+            <span>Path</span>
+            <input
+              type="text"
+              placeholder="/ws"
+              value={localConfig.path}
+              onChange={(e) => handleFieldChange("path", e.target.value)}
+            />
+          </label>
         </div>
         <div className="settings-actions">
-          <button
-            type="button"
-            className="btn-secondary btn-sm"
-            onClick={() => loadWifiConfig({ silent: false }).catch(() => {})}
-            disabled={disableActions}
-          >
-            {wifiLoading ? "Refreshing..." : "Refresh"}
+          <button type="submit" className="btn-primary">
+            Connect
           </button>
-          <button
-            type="button"
-            className="btn-secondary btn-sm"
-            onClick={handleAutoDiscovery}
-            disabled={disableActions || wifiConfig?.autoDiscovery}
-          >
-            Use Auto Discovery
+          <button type="button" className="btn-secondary" onClick={handlePersist}>
+            Save Config
           </button>
-          <button type="submit" className="btn-primary btn-sm" disabled={!hasChanges || wifiSaving}>
-            {wifiSaving ? "Applying..." : "Apply Changes"}
+          <button type="button" className="btn-danger" onClick={handleReset}>
+            Reset
           </button>
         </div>
-        {wifiStatus?.message ? (
-          <p
-            className={`settings-status ${wifiStatus.tone === "success" ? "success" : wifiStatus.tone === "error" ? "error" : ""}`.trim()}
-            role="status"
-            aria-live="polite"
-          >
-            {wifiStatus.message}
-          </p>
-        ) : null}
       </form>
     </article>
   );
@@ -771,6 +591,15 @@ export default function SettingsPage() {
         <WifiSettings />
         <CameraSettings />
         <ShelfMapSettings />
+        <article className="settings-card" data-device="esp32">
+          <header>
+            <h3>ESP32 Controller</h3>
+            <p>Main robot controller settings and diagnostics.</p>
+          </header>
+          <div className="settings-placeholder">
+            <p>ESP32 firmware version, memory usage, and advanced configuration options.</p>
+          </div>
+        </article>
         <article className="settings-card" data-device="uno">
           <header>
             <h3>UNO Controller</h3>
