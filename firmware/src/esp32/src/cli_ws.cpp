@@ -16,12 +16,13 @@ constexpr const char* kCliWsPath = "/ws/cli";
 constexpr uint16_t kMaxCommandLength = 512;
 constexpr uint32_t kHeartbeatIntervalMs = 2000;
 constexpr uint32_t kClientIdleTimeoutMs = 15000;
-constexpr size_t kMaxWsClients = 4;
+constexpr size_t kMaxWsClients = 8;
 httpd_handle_t s_ws_server = nullptr;
 unsigned long s_last_heartbeat_ms = 0;
 
 struct WsClient {
   int socket_fd;
+  bool wants_heartbeat;
   unsigned long last_heartbeat_ms;
 };
 
@@ -30,6 +31,7 @@ WsClient s_ws_clients[kMaxWsClients];
 void reset_clients() {
   for (size_t i = 0; i < kMaxWsClients; ++i) {
     s_ws_clients[i].socket_fd = -1;
+    s_ws_clients[i].wants_heartbeat = false;
     s_ws_clients[i].last_heartbeat_ms = 0;
   }
   s_last_heartbeat_ms = 0;
@@ -42,9 +44,25 @@ void unregister_client(int socket_fd) {
   for (size_t i = 0; i < kMaxWsClients; ++i) {
     if (s_ws_clients[i].socket_fd == socket_fd) {
       s_ws_clients[i].socket_fd = -1;
+      s_ws_clients[i].wants_heartbeat = false;
       s_ws_clients[i].last_heartbeat_ms = 0;
       logf("[CLIWS] client closed fd=%d", socket_fd);
       break;
+    }
+  }
+}
+
+void touch_client(int socket_fd, bool enable_heartbeat, unsigned long now) {
+  if (socket_fd < 0) {
+    return;
+  }
+  for (size_t i = 0; i < kMaxWsClients; ++i) {
+    if (s_ws_clients[i].socket_fd == socket_fd) {
+      s_ws_clients[i].last_heartbeat_ms = now;
+      if (enable_heartbeat) {
+        s_ws_clients[i].wants_heartbeat = true;
+      }
+      return;
     }
   }
 }
@@ -54,20 +72,48 @@ void register_client(httpd_req_t* request) {
   if (socket_fd < 0) {
     return;
   }
+  const unsigned long now = millis();
   for (size_t i = 0; i < kMaxWsClients; ++i) {
     if (s_ws_clients[i].socket_fd == socket_fd) {
-      s_ws_clients[i].last_heartbeat_ms = millis();
+      s_ws_clients[i].last_heartbeat_ms = now;
       return;
     }
   }
   for (size_t i = 0; i < kMaxWsClients; ++i) {
     if (s_ws_clients[i].socket_fd < 0) {
       s_ws_clients[i].socket_fd = socket_fd;
-      s_ws_clients[i].last_heartbeat_ms = millis();
+      s_ws_clients[i].wants_heartbeat = false;
+      s_ws_clients[i].last_heartbeat_ms = now;
       logf("[CLIWS] client registered fd=%d", socket_fd);
       return;
     }
   }
+  size_t victim_index = kMaxWsClients;
+  unsigned long oldest = now;
+  for (size_t i = 0; i < kMaxWsClients; ++i) {
+    if (s_ws_clients[i].socket_fd < 0) {
+      victim_index = i;
+      break;
+    }
+    if (s_ws_clients[i].last_heartbeat_ms <= oldest) {
+      oldest = s_ws_clients[i].last_heartbeat_ms;
+      victim_index = i;
+    }
+  }
+
+  if (victim_index < kMaxWsClients) {
+    const int victim_fd = s_ws_clients[victim_index].socket_fd;
+    if (victim_fd >= 0 && s_ws_server) {
+      httpd_sess_trigger_close(s_ws_server, victim_fd);
+    }
+    unregister_client(victim_fd);
+    s_ws_clients[victim_index].socket_fd = socket_fd;
+    s_ws_clients[victim_index].wants_heartbeat = false;
+    s_ws_clients[victim_index].last_heartbeat_ms = now;
+    logf("[CLIWS] client registered fd=%d after evicting fd=%d", socket_fd, victim_fd);
+    return;
+  }
+
   log_line("[CLIWS] too many WebSocket clients");
 }
 
@@ -108,6 +154,9 @@ void broadcast_heartbeat() {
     if (s_ws_clients[i].socket_fd < 0) {
       continue;
     }
+    if (!s_ws_clients[i].wants_heartbeat) {
+      continue;
+    }
     esp_err_t err = httpd_ws_send_frame_async(s_ws_server, s_ws_clients[i].socket_fd, &frame);
     if (err != ESP_OK) {
       logf("[CLIWS] heartbeat failed fd=%d err=0x%x", s_ws_clients[i].socket_fd, static_cast<unsigned>(err));
@@ -122,6 +171,7 @@ esp_err_t cli_ws_handler(httpd_req_t* request) {
   if (request->method == HTTP_GET) {
     log_line("[CLIWS] handshake");
     register_client(request);
+    touch_client(httpd_req_to_sockfd(request), false, millis());
     return ESP_OK;
   }
 
@@ -174,12 +224,7 @@ esp_err_t cli_ws_handler(httpd_req_t* request) {
     const unsigned long now = millis();
     const int socket_fd = httpd_req_to_sockfd(request);
     if (socket_fd >= 0) {
-      for (size_t i = 0; i < kMaxWsClients; ++i) {
-        if (s_ws_clients[i].socket_fd == socket_fd) {
-          s_ws_clients[i].last_heartbeat_ms = now;
-          break;
-        }
-      }
+      touch_client(socket_fd, true, now);
     }
     httpd_ws_frame_t pong = {};
     pong.type = HTTPD_WS_TYPE_PONG;
@@ -197,12 +242,7 @@ esp_err_t cli_ws_handler(httpd_req_t* request) {
     const unsigned long now = millis();
     const int socket_fd = httpd_req_to_sockfd(request);
     if (socket_fd >= 0) {
-      for (size_t i = 0; i < kMaxWsClients; ++i) {
-        if (s_ws_clients[i].socket_fd == socket_fd) {
-          s_ws_clients[i].last_heartbeat_ms = now;
-          break;
-        }
-      }
+      touch_client(socket_fd, true, now);
     }
     free(payload);
     return ESP_OK;
@@ -233,12 +273,7 @@ esp_err_t cli_ws_handler(httpd_req_t* request) {
   }
   const int socket_fd = httpd_req_to_sockfd(request);
   if (socket_fd >= 0) {
-    for (size_t i = 0; i < kMaxWsClients; ++i) {
-      if (s_ws_clients[i].socket_fd == socket_fd) {
-        s_ws_clients[i].last_heartbeat_ms = millis();
-        break;
-      }
-    }
+    touch_client(socket_fd, false, millis());
   }
   return ESP_OK;
 }

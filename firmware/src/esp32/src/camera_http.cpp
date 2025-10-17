@@ -8,6 +8,8 @@
 #include <esp_http_server.h>
 #include <img_converters.h>
 #include <strings.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 namespace {
 httpd_handle_t s_httpd = nullptr;
@@ -36,6 +38,46 @@ const ResolutionEntry kResolutionTable[] = {
 
 CameraHttpConfig s_config{ kDefaultFrameSize, kDefaultJpegQuality };
 size_t s_max_resolution_index = 0;
+SemaphoreHandle_t s_snapshot_mutex = nullptr;
+
+class MutexGuard {
+ public:
+  explicit MutexGuard(SemaphoreHandle_t handle)
+      : handle_(handle), locked_(false) {}
+
+  bool lock(TickType_t wait_ticks) {
+    if (!handle_) {
+      return false;
+    }
+    if (xSemaphoreTake(handle_, wait_ticks) == pdTRUE) {
+      locked_ = true;
+      return true;
+    }
+    return false;
+  }
+
+  ~MutexGuard() {
+    if (locked_ && handle_) {
+      xSemaphoreGive(handle_);
+    }
+  }
+
+ private:
+  SemaphoreHandle_t handle_;
+  bool locked_;
+};
+
+bool ensure_snapshot_mutex() {
+  if (s_snapshot_mutex) {
+    return true;
+  }
+  s_snapshot_mutex = xSemaphoreCreateMutex();
+  if (!s_snapshot_mutex) {
+    log_line("[CameraHTTP] Failed to create snapshot mutex");
+    return false;
+  }
+  return true;
+}
 
 size_t resolution_count() {
   return sizeof(kResolutionTable) / sizeof(kResolutionTable[0]);
@@ -72,6 +114,19 @@ const ResolutionEntry* find_resolution(const char* name) {
 }
 
 esp_err_t snapshot_handler(httpd_req_t* req) {
+  if (!ensure_snapshot_mutex()) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Camera lock failure");
+    return ESP_FAIL;
+  }
+
+  MutexGuard lock(s_snapshot_mutex);
+  if (!lock.lock(pdMS_TO_TICKS(5000))) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "Camera busy", HTTPD_RESP_USE_STRLEN);
+    return ESP_FAIL;
+  }
+
   if (!wifi_is_connected()) {
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "WiFi disconnected");
     return ESP_FAIL;
@@ -101,11 +156,15 @@ esp_err_t snapshot_handler(httpd_req_t* req) {
   char size_hdr[64];
   snprintf(size_hdr, sizeof(size_hdr), "%ux%u", fb->width, fb->height);
   httpd_resp_set_hdr(req, "X-Frame-Size", size_hdr);
+  httpd_resp_set_hdr(req, "Connection", "close");
   logf("[CameraHTTP] Serving snapshot %ux%u, len=%u", fb->width, fb->height, static_cast<unsigned>(jpg_len));
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
   httpd_resp_set_hdr(req, "Pragma", "no-cache");
   httpd_resp_set_hdr(req, "Expires", "0");
   esp_err_t res = httpd_resp_send(req, reinterpret_cast<const char*>(jpg), jpg_len);
+  if (res != ESP_OK) {
+    logf("[CameraHTTP] snapshot send failed err=0x%x", static_cast<unsigned>(res));
+  }
 
   if (allocated && jpg) {
     free(jpg);
@@ -131,6 +190,7 @@ void camera_http_init() {
   s_config.jpeg_quality = kDefaultJpegQuality;
   int idx = find_resolution_index(kDefaultFrameSize);
   s_max_resolution_index = idx >= 0 ? static_cast<size_t>(idx) : 0;
+  ensure_snapshot_mutex();
 }
 
 bool camera_http_sync_sensor() {

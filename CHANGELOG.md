@@ -1,5 +1,21 @@
 # Changelog
 
+## [2025-10-17]
+
+### Firmware (ESP32)
+
+- Camera snapshot handler now serialises access with a FreeRTOS mutex, adds `Connection: close`, and logs send failures so concurrent REST requests no longer stack or corrupt frames.
+- WebSocket CLI bridge supports up to eight clients, evicts stale sockets, and tracks heartbeat opt-in per peer; idle detection is more accurate thanks to centralised touch handling.
+
+### Tooling & Operations
+
+- `scripts/flash_firmware.sh` auto-detects common USB serial adapters and passes the port to PlatformIO when flashing the ESP32-S3, trimming manual `--upload-port` lookups.
+- Updated `.serial_bridge.pid` and `.wifi_last_ip` with the latest operator-stack session data after wiring diagnostics.
+
+### Documentation (Wiring)
+
+- `docs/wire.md` now pairs the Arduino UNO pin map with an ESP32-S3 table and emphasises SDA/SCL pull-ups to 3.3 V, helping avoid miswired I²C links during bring-up.
+
 ## [2025-10-16]
 
 ### Frontend
