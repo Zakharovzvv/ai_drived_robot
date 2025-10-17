@@ -159,6 +159,15 @@
 - [x] Слинковать новый чек-лист с `docs/deploy-guide.md` и обновить ссылки/контекст.
 - [x] Подготовить шаблон отчёта о стендовых прогонах (при необходимости) и отметить секцию в `docs/operator.md`.
 
+### 19. Status Page Redesign (2025-10-17)
+
+- [x] Переработать страницу статусов (`StatusPage.jsx`) для отображения двух основных устройств в двухколоночном layout: ESP32 слева, Arduino UNO справа.
+- [x] Создать иерархическую структуру с вложенными сервисами для ESP32: UART, Wi-Fi, Camera, I2C Link, Bluetooth (placeholder).
+- [x] Добавить сервисы для Arduino UNO: Motors (Drive), Line Sensors, Manipulator (Lift & Grip), Power & Battery.
+- [x] Реализовать компоненты DeviceCard и ServiceStatus с индикаторами состояния подключения (зелёный/красный), статусами (Online/Offline) и детальной телеметрией.
+- [x] Добавить CSS стили для двухколоночного grid layout с адаптивностью для мобильных устройств.
+- [x] Обновить CHANGELOG с описанием новой иерархической структуры статусов.
+
 ## Recent changes (2025-10-12)
 
 - Firmware: added X-Frame-Size header to camera snapshot responses and initial test-frame logging in `vision_color` to help validate real framebuffer dimensions. Camera init iterates candidate frame sizes and reports a `cam_max` value via CLI.

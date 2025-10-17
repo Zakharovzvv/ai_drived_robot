@@ -2,6 +2,24 @@
 
 ## [2025-10-17]
 
+### Frontend (Operator Console)
+
+- **Redesigned Status Page**: Restructured device status display into a two-column layout with ESP32 on the left and Arduino UNO on the right.
+  - **ESP32 Device Card**: Displays overall device status with nested service cards for:
+    - UART (Serial) - connection port, update age
+    - Wi-Fi - IP address, WebSocket endpoint, transport availability
+    - Camera - resolution, quality, streaming status, transport type
+    - I2C (UNO Link) - connection status to Arduino
+    - Bluetooth - placeholder for future implementation
+  - **Arduino UNO Device Card**: Shows device status with service cards for:
+    - Motors (Drive) - left/right motor values, speed in mps
+    - Line Sensors - left/right sensor readings, threshold
+    - Manipulator - lift position (mm), grip angle (°), encoder values
+    - Power & Battery - voltage, E-Stop status
+  - Each service card shows connection indicator (green/red), online/offline state, and relevant telemetry data
+  - System Info sections display device-level diagnostic data (state ID, error flags, sequence ACK)
+  - This hierarchical view clearly represents the robot's two-MCU architecture and their respective subsystems
+
 ### Firmware (ESP32)
 
 - Camera snapshot handler now serialises access with a FreeRTOS mutex, adds `Connection: close`, and logs send failures so concurrent REST requests no longer stack or corrupt frames.
@@ -14,7 +32,7 @@
 
 ### Documentation (Wiring)
 
-- `docs/wire.md` now pairs the Arduino UNO pin map with an ESP32-S3 table and emphasises SDA/SCL pull-ups to 3.3 V, helping avoid miswired I²C links during bring-up.
+- `docs/wire.md` now pairs the Arduino UNO pin map with an ESP32-S3 table and emphasises SDA/SCL pull-ups to 3.3 V, helping avoid miswired I²C links during bring-up.
 
 ## [2025-10-16]
 
