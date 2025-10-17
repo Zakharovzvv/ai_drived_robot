@@ -40,16 +40,27 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  transition: padding 0.2s ease;
+}
+
+.header-compact.header-expanded {
+  padding-bottom: 1rem;
 }
 
 .header-content {
   max-width: 1600px;
   margin: 0 auto;
   display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.header-main-row {
+  display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
   gap: 2rem;
+  flex-wrap: wrap;
 }
 
 .header-compact h1 {
@@ -68,6 +79,188 @@ body {
   gap: 1.5rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+/* Toggle button in header */
+.btn-header-toggle {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  padding: 0.5rem 0.875rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.btn-header-toggle:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.btn-header-toggle .btn-text {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.75rem;
+}
+
+.btn-header-toggle .chevron-icon {
+  transition: transform 0.2s ease;
+}
+
+/* Header commands section */
+.header-commands {
+  display: flex;
+  gap: 1rem;
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  animation: slideDown 0.2s ease;
+  flex-wrap: wrap;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.header-commands .command-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: fit-content;
+}
+
+.header-commands .command-group-label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding-left: 0.125rem;
+}
+
+.header-commands .command-group-task {
+  flex: 0 1 auto;
+}
+
+.header-commands .command-group-task .command-group-label {
+  color: rgb(22, 163, 74);
+}
+
+.header-commands .command-group-emergency {
+  flex: 0 0 auto;
+}
+
+.header-commands .command-group-emergency .command-group-label {
+  color: rgb(220, 38, 38);
+}
+
+.header-commands .command-group-debug {
+  flex: 1 1 auto;
+  min-width: 280px;
+}
+
+.header-commands .command-group-debug .command-group-label {
+  color: rgb(107, 114, 128);
+}
+
+.header-commands .inline-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.header-commands input[type="text"] {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition: all 0.2s ease;
+  min-width: 100px;
+}
+
+.header-commands input[type="text"]::placeholder {
+  color: var(--color-text-muted);
+}
+
+.header-commands input[type="text"]:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(11, 114, 133, 0.1);
+}
+
+.header-commands .command-input-group {
+  flex: 1;
+}
+
+.header-commands .command-input-group input[type="text"] {
+  width: 100%;
+}
+
+.header-commands .btn-action {
+  font-size: 0.8125rem;
+  padding: 0.5rem 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.header-commands .btn-primary {
+  background: var(--color-primary);
+  color: white;
+}
+
+.header-commands .btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.header-commands .btn-danger {
+  background: var(--color-danger);
+  color: white;
+}
+
+.header-commands .btn-danger:hover:not(:disabled) {
+  background: #b91c1c;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.header-commands .btn-secondary {
+  background: #64748b;
+  color: white;
+}
+
+.header-commands .btn-secondary:hover:not(:disabled) {
+  background: #475569;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.header-commands .btn-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .transport-badge {
@@ -214,6 +407,49 @@ body {
   background: var(--color-surface);
   border-bottom: 2px solid var(--color-border);
   box-shadow: var(--shadow-md);
+  transition: all 0.3s ease;
+}
+
+.command-bar.collapsed {
+  box-shadow: none;
+}
+
+.command-bar-toggle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.btn-toggle {
+  background: transparent;
+  border: none;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.btn-toggle:hover {
+  background: var(--color-bg);
+  color: var(--color-primary);
+}
+
+.btn-toggle svg {
+  transition: transform 0.2s ease;
+}
+
+.toggle-text {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.75rem;
 }
 
 .command-bar-content {
@@ -246,6 +482,57 @@ body {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(11, 114, 133, 0.1);
+}
+
+/* Command groups for visual separation */
+.command-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.command-group-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  padding-left: 0.25rem;
+  user-select: none;
+}
+
+.command-group-task {
+  padding: 0.5rem 1rem 0.5rem 0.5rem;
+  border-radius: var(--radius-md);
+  background: rgba(22, 163, 74, 0.04);
+  border: 1px solid rgba(22, 163, 74, 0.15);
+}
+
+.command-group-task .command-group-label {
+  color: rgb(22, 163, 74);
+}
+
+.command-group-emergency {
+  padding: 0.5rem 1rem 0.5rem 0.5rem;
+  border-radius: var(--radius-md);
+  background: rgba(220, 38, 38, 0.04);
+  border: 1px solid rgba(220, 38, 38, 0.15);
+}
+
+.command-group-emergency .command-group-label {
+  color: rgb(220, 38, 38);
+}
+
+.command-group-debug {
+  flex: 1;
+  padding: 0.5rem 1rem 0.5rem 0.5rem;
+  border-radius: var(--radius-md);
+  background: rgba(107, 114, 128, 0.04);
+  border: 1px solid rgba(107, 114, 128, 0.15);
+}
+
+.command-group-debug .command-group-label {
+  color: rgb(107, 114, 128);
 }
 
 #start-task {
@@ -392,16 +679,27 @@ body {
 
 /* Responsive */
 @media (max-width: 1200px) {
-  .header-content {
+  .header-main-row {
     flex-direction: column;
     align-items: flex-start;
+    gap: 1rem;
   }
-  
-  .command-bar-content {
-    flex-wrap: wrap;
+
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
   }
-  
-  .command-input-group {
+
+  .header-commands {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .header-commands .command-group {
+    width: 100%;
+  }
+
+  .header-commands .command-group-debug {
     min-width: 100%;
   }
 
