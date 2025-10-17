@@ -93,20 +93,18 @@ function ControlTransportSettings() {
           <div className="transport-status-header">
             <div>
               <span className="transport-name">Automatic</span>
-              <span className={autoBadgeClass}>
-                Wi-Fi → UART
-              </span>
+              <span className={autoBadgeClass}>Wi-Fi → UART</span>
             </div>
-            <div className="transport-actions">
-              <button
-                type="button"
-                className="btn-secondary btn-sm"
-                onClick={() => handleSwitch("auto")}
-                disabled={controlModePending || activeMode === "auto"}
-              >
-                {activeMode === "auto" ? "Active" : "Use Auto"}
-              </button>
-            </div>
+          </div>
+          <div className="transport-actions">
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() => handleSwitch("auto")}
+              disabled={controlModePending || activeMode === "auto"}
+            >
+              {activeMode === "auto" ? "Active" : "Use"}
+            </button>
           </div>
         </li>
         {transports.map((transport) => {
@@ -127,20 +125,40 @@ function ControlTransportSettings() {
                     {transport.available ? "Online" : "Offline"}
                   </span>
                 </div>
-                <div className="transport-actions">
-                  <button
-                    type="button"
-                    className="btn-secondary btn-sm"
-                    onClick={() => handleSwitch(transport.id)}
-                    disabled={controlModePending || activeMode === transport.id}
-                  >
-                    {activeMode === transport.id ? "Active" : "Use"}
-                  </button>
-                </div>
+              </div>
+              <div className="transport-actions">
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => handleSwitch(transport.id)}
+                  disabled={controlModePending || activeMode === transport.id}
+                >
+                  {activeMode === transport.id ? "Active" : "Use"}
+                </button>
               </div>
             </li>
           );
         })}
+        <li className="transport-status-item" data-active={false}>
+          <div className="transport-status-header">
+            <div>
+              <span className="transport-name">Bluetooth</span>
+              <span className="transport-badge offline">
+                <span className="badge-dot" />
+                Not Implemented
+              </span>
+            </div>
+          </div>
+          <div className="transport-actions">
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              disabled={true}
+            >
+              Coming Soon
+            </button>
+          </div>
+        </li>
       </ul>
       <div className="settings-actions">
         <button type="button" className="btn-secondary btn-sm" onClick={handleRefresh} disabled={controlModePending}>

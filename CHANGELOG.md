@@ -4,6 +4,18 @@
 
 ### Frontend (Operator Console)
 
+- **Redesigned Settings Page**: Complete restructure with clear device-based grouping to eliminate duplication and improve usability.
+  - **Connection to ESP32**: Unified section combining Control Transport Mode selection and Wi-Fi Network Configuration
+    - Control Transport Mode shows auto/manual channel selection (Wi-Fi/UART) with last success/failure timestamps
+    - Wi-Fi configuration includes MAC address, MAC prefix, static IP, WebSocket port/path settings
+    - Both settings previously duplicated across separate cards are now in one cohesive interface
+  - **Camera Settings**: Dedicated section for resolution and JPEG quality controls
+  - **Shelf Map**: Independent section for 3×3 color grid configuration with persist-to-flash option
+  - **ESP32 Settings**: Placeholder for future system parameters and firmware configuration
+  - **Arduino UNO Settings**: Placeholder for sensor calibration and motion parameters
+  - Added visual hierarchy with subsection styling and clear separation between setting groups
+  - Improved form layout consistency across all device configuration cards
+
 - **Redesigned Status Page**: Restructured device status display into a two-column layout with ESP32 on the left and Arduino UNO on the right.
   - **ESP32 Device Card**: Displays overall device status with nested service cards for:
     - UART (Serial) - connection port, update age

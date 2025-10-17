@@ -17,6 +17,9 @@ backend/operator/.venv/
 node_modules/
 frontend/web/node_modules/
 
+# Build outputs
+frontend/web/dist/
+
 # Operator runtime outputs
 .operator_runtime/
 

@@ -168,6 +168,19 @@
 - [x] Добавить CSS стили для двухколоночного grid layout с адаптивностью для мобильных устройств.
 - [x] Обновить CHANGELOG с описанием новой иерархической структуры статусов.
 
+### 20. Settings Page Redesign (2025-10-17)
+
+- [x] Провести аудит текущей страницы настроек и выявить дублирование (Control Link, Wi-Fi Settings).
+- [x] Переработать `SettingsPage.jsx` с группировкой настроек по устройствам: **ESP32**, **Arduino UNO**, **Camera**, **Shelf Map**, **Connection**.
+- [x] Создать секцию **Connection Settings** с объединёнными настройками подключения к ESP32 (Control Link режимы + Wi-Fi конфигурация).
+- [x] Создать секцию **ESP32 Settings** для настроек, специфичных для ESP32 (системные параметры, если потребуются).
+- [x] Создать секцию **Arduino UNO Settings** для калибровки сенсоров и параметров движения.
+- [x] Вынести настройки камеры в отдельную секцию **Camera Settings**.
+- [x] Оставить **Shelf Map Settings** как независимую секцию.
+- [x] Унифицировать дизайн карточек настроек: единая структура заголовков, полей форм и кнопок действий.
+- [x] Обновить CSS для новой структуры Settings с улучшенной читаемостью и визуальной иерархией.
+- [x] Обновить CHANGELOG с описанием новой структуры страницы настроек.
+
 ## Recent changes (2025-10-12)
 
 - Firmware: added X-Frame-Size header to camera snapshot responses and initial test-frame logging in `vision_color` to help validate real framebuffer dimensions. Camera init iterates candidate frame sizes and reports a `cam_max` value via CLI.
