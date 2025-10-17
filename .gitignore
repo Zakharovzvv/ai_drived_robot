@@ -22,4 +22,8 @@ frontend/web/node_modules/
 
 # Logs and misc
 *.log
+/# Runtime dotfiles created by local helper scripts
+.serial_bridge.pid
+.serial_bridge.log
+.wifi_last_ip
 /docs/robot-photos
