@@ -70,6 +70,7 @@ class OperatorService:
         self._transports: Dict[str, Any] = {}
         self._transport_endpoints: Dict[str, Optional[str]] = {}
         self._transport_health: Dict[str, Dict[str, Any]] = {}
+        self._transport_probe_at: Dict[str, float] = {}
         self._transport_retry_cooldown = DEFAULT_TRANSPORT_RETRY_COOLDOWN
         cooldown_env = os.getenv("OPERATOR_TRANSPORT_RETRY_COOLDOWN")
         if cooldown_env:
@@ -313,6 +314,9 @@ class OperatorService:
         self._shelf_cache_timestamp: Optional[float] = None
         self._shelf_cache_ttl = 1.0
         self._cached_camera_max_resolution = None
+
+        with contextlib.suppress(Exception):
+            self._probe_serial_transport(force=True)
 
     def _compose_wifi_endpoint(self, ip: str, port: Optional[int], path: Optional[str]) -> str:
         resolved_port = port if isinstance(port, int) and port > 0 else 81
@@ -781,7 +785,9 @@ class OperatorService:
         )
         state["available"] = True
         state["last_error"] = None
-        state["last_success"] = time.time()
+        timestamp = time.time()
+        state["last_success"] = timestamp
+        self._transport_probe_at[transport] = timestamp
 
     def _record_transport_failure(self, transport: str, error: str) -> None:
         state = self._transport_health.setdefault(
@@ -790,7 +796,9 @@ class OperatorService:
         )
         state["available"] = False
         state["last_error"] = error
-        state["last_failure"] = time.time()
+        timestamp = time.time()
+        state["last_failure"] = timestamp
+        self._transport_probe_at[transport] = timestamp
 
         if transport == TRANSPORT_WIFI:
             should_enable_auto = False
@@ -825,6 +833,48 @@ class OperatorService:
                 else:
                     loop.create_task(self._maybe_discover_wifi_endpoint(force=True))
 
+    def _probe_serial_transport(self, *, force: bool = False) -> None:
+        with self._link_lock:
+            link = self._transports.get(TRANSPORT_SERIAL)
+            if link is None:
+                return
+
+            open_method = getattr(link, "open", None)
+            if not callable(open_method):
+                return
+
+            now = time.time()
+            last_probe = self._transport_probe_at.get(TRANSPORT_SERIAL)
+            if not force and last_probe is not None:
+                if (now - last_probe) < self._transport_retry_cooldown:
+                    return
+
+            try:
+                open_method()
+            except SerialNotFoundError as exc:
+                logger.debug("Serial transport probe failed: %s", exc)
+                endpoint_hint = getattr(link, "requested_port", None)
+                if endpoint_hint:
+                    self._transport_endpoints[TRANSPORT_SERIAL] = endpoint_hint
+                else:
+                    self._transport_endpoints.pop(TRANSPORT_SERIAL, None)
+                self._record_transport_failure(TRANSPORT_SERIAL, str(exc))
+                return
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("Unexpected error while probing serial transport")
+                self._record_transport_failure(TRANSPORT_SERIAL, str(exc))
+                return
+
+            active_port = getattr(link, "active_port", None)
+            if active_port:
+                self._transport_endpoints[TRANSPORT_SERIAL] = active_port
+            else:
+                endpoint_hint = getattr(link, "requested_port", None)
+                if endpoint_hint:
+                    self._transport_endpoints[TRANSPORT_SERIAL] = endpoint_hint
+
+            self._record_transport_success(TRANSPORT_SERIAL)
+
     def _should_skip_transport(self, transport: str) -> bool:
         if self._control_mode != TRANSPORT_AUTO:
             return False
@@ -839,6 +889,7 @@ class OperatorService:
         return (time.time() - last_failure) < self._transport_retry_cooldown
 
     def _control_state_snapshot(self) -> Dict[str, Any]:
+        self._probe_serial_transport()
         transports: List[Dict[str, Any]] = []
         known_transports: Set[str] = set(self._transports.keys()) | set(self._transport_health.keys())
         if self._active_transport:
