@@ -49,6 +49,9 @@ rbm-operator brake
 rbm-operator smap get
 rbm-operator smap set "R,G,B; Y,W,K; -,-,-"
 rbm-operator smap save
+
+# Диагностика I²C-шины (ESP32 ↔ UNO)
+rbm-operator command "I2C SCAN"
 ```
 
 Часто используемые опции:
@@ -56,6 +59,27 @@ rbm-operator smap save
 - `--port` — явный путь к последовательному порту (например `/dev/ttyUSB0`, `COM5`).
 - `--baudrate` — скорость UART, по умолчанию `115200`.
 - `--raw` — вывести оригинальные строки CLI без JSON-преобразования.
+
+### Ручные проверки движения
+
+Прошивка поддерживает набор команд `CTRL`, позволяющих вручную пробежать приводы без изменения кода:
+
+```bash
+rbm-operator command "CTRL HOME"                 # лифт/захват в ноль
+rbm-operator command "CTRL DRIVE vx=200 t=1500"  # прямолинейный ход
+rbm-operator command "CTRL TURN dir=left speed=350 t=1200"
+rbm-operator command "CTRL ELEV h=120 speed=120" # лифт вверх
+rbm-operator command "CTRL GRIP CLOSE"           # закрыть захват
+rbm-operator brake                                # нейтраль
+```
+
+Подробный порядок шагов, включая ожидания по телеметрии, см. в `docs/testing/basic-motion-test.md`.
+
+### Справочник команд CLI
+
+Подробное описание всех команд, включая примеры ответов, вынесено в `docs/operator-cli-reference.md`. Раздел охватывает STATUS/LOGS, управление камерой (`CAMCFG`, `CAMSTREAM`), автоматизацию (`START`, `BRAKE`), набор `CTRL` и работу с картой полок `SMAP` как по UART, так и по WebSocket.
+
+> Совет: при работе через WebSocket добавляйте `--transport ws --ws-endpoint ws://<ip>:81/ws/cli`, чтобы CLI использовал Wi‑Fi канал.
 
 ## 4. Веб-интерфейс
 
@@ -145,7 +169,7 @@ brew install socat  # macOS
 Прошивка ESP32 поднимает WebSocket-сервер на `ws://<ip-адрес-esp32>:81/ws/cli`, который повторяет UART CLI. Можно переключить backend и CLI на управление по Wi‑Fi:
 
 1. Убедитесь, что ESP32 подключена к Wi‑Fi и доступна по имени/адресу (например `esp32.local`).
-2. Задайте переменные окружения (подходит как для `rbm-operator-server`, так и для CLI). Backend в режиме `auto` сам переходит на Wi‑Fi, как только получит IP из телеметрии, поэтому `OPERATOR_WS_ENDPOINT` можно не указывать, если CLI/сервер работают в той же сети:
+2. Задайте переменные окружения (подходит как для `rbm-operator-server`, так и для CLI). Backend в режиме `auto` сам переходит на Wi‑Fi, как только получит IP из телеметрии, а также кэширует обнаруженный endpoint, поэтому `OPERATOR_WS_ENDPOINT` можно не указывать — его достаточно указать один раз при первом запуске или пропустить вовсе, полагаясь на автодетект. Если задали значение вручную, скрипт автоматически перепишет кэш и последующие перезапуски будут использовать новое значение:
 
    ```bash
    export OPERATOR_CONTROL_TRANSPORT=auto   # или ws для принудительного режима
@@ -162,7 +186,7 @@ brew install socat  # macOS
 
    При выборе `--transport ws` параметры `--port`/`--baudrate` игнорируются.
 
-4. Для backend/web UI достаточно экспортировать переменные перед запуском `rbm-operator-server` либо добавить их в `.env` (перечитывается `scripts/operator_stack.sh`).
+4. Для backend/web UI достаточно экспортировать переменные перед запуском `rbm-operator-server`. Docker-скрипт `operator_stack_docker.sh` сохраняет найденный IP в `.state/backend/last_wifi_endpoint.json`, поэтому повторная настройка не требуется.
 
 > Примечание: прошивка зеркалирует все логи в кольцевой буфер и отдаёт их через команду `LOGS`. Backend автоматически подхватывает эти данные и продолжает стрим `/ws/logs`, даже если USB отключён.
 

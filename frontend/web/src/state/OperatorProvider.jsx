@@ -21,6 +21,7 @@ const OperatorContext = createContext(null);
 const TELEMETRY_WS_PATH = "/ws/telemetry";
 const CAMERA_WS_PATH = "/ws/camera";
 const LOG_WS_PATH = "/ws/logs";
+const CAMERA_DISABLED_MESSAGE = "Camera stream disabled. Use Enable Stream above.";
 
 function withBase(path) {
   return `${API_BASE}${path}`;
@@ -171,6 +172,12 @@ function normalizeCameraConfig(raw) {
     available_resolutions: Array.isArray(raw.available_resolutions) ? raw.available_resolutions : [],
     quality_min: Number.isNaN(parsedQualityMin) ? 10 : parsedQualityMin,
     quality_max: Number.isNaN(parsedQualityMax) ? 63 : parsedQualityMax,
+    max_resolution:
+      typeof raw.max_resolution === "string" && raw.max_resolution.trim()
+        ? raw.max_resolution.trim().toUpperCase()
+        : typeof raw.maxResolution === "string" && raw.maxResolution.trim()
+        ? raw.maxResolution.trim().toUpperCase()
+        : null,
   };
   return normalized;
 }
@@ -179,7 +186,8 @@ function buildCameraStatusMessage(config) {
   if (!config) return "";
   const streamLabel = config.running ? "Streaming" : "Idle";
   const qualityLabel = config.quality != null ? config.quality : "—";
-  return `Current: ${config.resolution} • Quality ${qualityLabel} • ${streamLabel}`;
+  const maxLabel = config.max_resolution ? ` • Max ${config.max_resolution}` : "";
+  return `Current: ${config.resolution} • Quality ${qualityLabel} • ${streamLabel}${maxLabel}`;
 }
 
 function normalizePalette(palette) {
@@ -200,6 +208,114 @@ function normalizePalette(palette) {
     return DEFAULT_SHELF_PALETTE.map((item) => ({ ...item, textColor: contrastTextColor(item.color) }));
   }
   return deduped;
+}
+
+function normalizeWifiConfig(raw) {
+  if (!raw || typeof raw !== "object") {
+    return {
+      macAddress: "",
+      macPrefix: "",
+      ipAddress: "",
+      wsPort: null,
+      wsPath: "",
+      endpoint: null,
+      transportAvailable: false,
+      autoDiscovery: true,
+    };
+  }
+
+  const macAddress = typeof raw.mac_address === "string" ? raw.mac_address.trim().toUpperCase() : "";
+  const macPrefix = typeof raw.mac_prefix === "string" ? raw.mac_prefix.trim().toUpperCase() : "";
+  const ipAddress = typeof raw.ip_address === "string" ? raw.ip_address.trim() : "";
+  const rawPort = raw.ws_port ?? raw.port ?? null;
+  const parsedPort = Number.parseInt(rawPort, 10);
+  const wsPort = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : null;
+  const wsPath = typeof raw.ws_path === "string" ? raw.ws_path.trim() : "";
+  const endpoint = typeof raw.endpoint === "string" ? raw.endpoint.trim() : null;
+  const transportAvailable = Boolean(raw.transport_available);
+  const autoDiscovery = raw.auto_discovery !== undefined ? Boolean(raw.auto_discovery) : true;
+
+  return {
+    macAddress,
+    macPrefix,
+    ipAddress,
+    wsPort,
+    wsPath,
+    endpoint,
+    transportAvailable,
+    autoDiscovery,
+  };
+}
+
+function buildWifiStatusMessage(config) {
+  if (!config) {
+    return "";
+  }
+  if (config.transportAvailable && config.endpoint) {
+    return `Control link ready at ${config.endpoint}`;
+  }
+  if (config.endpoint) {
+    return `Static endpoint configured: ${config.endpoint}`;
+  }
+  if (config.autoDiscovery) {
+    return "Auto-discovery enabled. Waiting for ESP32 broadcast.";
+  }
+  return "Wi-Fi transport disabled. Clear overrides or provide an ESP32 IP to reconnect.";
+}
+
+function deriveControlOverview(state, headerStatus) {
+  const transportsSource = Array.isArray(state?.transports) ? state.transports : [];
+  const transports = transportsSource.map((entry) => {
+    const identifier = entry?.id || entry?.transport || "";
+    const id = typeof identifier === "string" ? identifier.trim().toLowerCase() : identifier;
+    const rawLabel = entry?.label || entry?.name || entry?.id || identifier;
+    const label = typeof rawLabel === "string" && rawLabel.trim() ? rawLabel : (id ? id.toString().toUpperCase() : "");
+
+    return {
+      id: typeof id === "string" ? id : String(id || ""),
+      label,
+      endpoint: entry?.endpoint ?? entry?.url ?? entry?.address ?? null,
+      available: Boolean(entry?.available),
+      lastSuccess: entry?.last_success ?? entry?.lastSuccess ?? null,
+      lastFailure: entry?.last_failure ?? entry?.lastFailure ?? null,
+      lastError: entry?.last_error ?? entry?.lastError ?? null,
+    };
+  });
+
+  const mode = state?.mode ?? "auto";
+  const activeIdRaw = state?.active;
+  const activeId = typeof activeIdRaw === "string" ? activeIdRaw.trim().toLowerCase() : activeIdRaw || null;
+  const activeTransport = transports.find((item) => item.id === activeId) || null;
+  const availableTransports = transports.filter((item) => item.available);
+  const primaryTransport = activeTransport?.available ? activeTransport : availableTransports[0] || null;
+  const phase = headerStatus?.phase ?? "connecting";
+
+  let status = "offline";
+  if (primaryTransport) {
+    status = "online";
+  } else if (phase === "connecting") {
+    status = "connecting";
+  }
+  if (phase === "disconnected") {
+    status = "disconnected";
+  }
+
+  return {
+    mode,
+    activeId,
+    activeTransport,
+    primaryTransport,
+    transports,
+    summary: {
+      phase,
+      status,
+      stale: Boolean(headerStatus?.stale),
+      transportId: primaryTransport?.id || null,
+      transportLabel: primaryTransport?.label || null,
+      endpoint: primaryTransport?.endpoint || null,
+      availableCount: availableTransports.length,
+    },
+  };
 }
 
 export function OperatorProvider({ children }) {
@@ -242,6 +358,10 @@ export function OperatorProvider({ children }) {
   const [cameraTogglePending, setCameraTogglePending] = useState(false);
   const [controlState, setControlState] = useState(EMPTY_CONTROL_STATE);
   const [controlModePending, setControlModePending] = useState(false);
+  const [wifiConfig, setWifiConfig] = useState(null);
+  const [wifiStatus, setWifiStatus] = useState({ message: "", tone: "info" });
+  const [wifiLoading, setWifiLoading] = useState(false);
+  const [wifiSaving, setWifiSaving] = useState(false);
 
   const [shelfMapState, setShelfMapState] = useState(null);
   const [shelfPalette, setShelfPalette] = useState(normalizePalette(DEFAULT_SHELF_PALETTE));
@@ -544,6 +664,122 @@ export function OperatorProvider({ children }) {
       }
     },
     [requestJson, fetchServiceInfo, fetchControlState, fetchDiagnostics, showToast]
+  );
+
+  const loadWifiConfig = useCallback(
+    async ({ silent = false } = {}) => {
+      if (wifiLoading) {
+        return wifiConfig;
+      }
+      setWifiLoading(true);
+      if (!silent) {
+        setWifiStatus({ message: "Loading Wi-Fi settings…", tone: "info" });
+      }
+      try {
+        const payload = await requestJson("/api/control/wifi");
+        const normalized = normalizeWifiConfig(payload);
+        setWifiConfig(normalized);
+        const message = buildWifiStatusMessage(normalized);
+        const tone = normalized.transportAvailable ? "success" : "info";
+        setWifiStatus({ message, tone });
+        if (!silent) {
+          showToast("Wi-Fi settings refreshed", "success");
+        }
+        return normalized;
+      } catch (error) {
+        console.error("Failed to fetch Wi-Fi settings:", error);
+        setWifiStatus({ message: error.message || "Failed to load Wi-Fi settings", tone: "error" });
+        if (!silent) {
+          showToast(error.message || "Failed to load Wi-Fi settings", "error");
+        }
+        throw error;
+      } finally {
+        setWifiLoading(false);
+      }
+    },
+    [wifiLoading, wifiConfig, requestJson, showToast]
+  );
+
+  const applyWifiConfig = useCallback(
+    async (changes = {}, { silent = false } = {}) => {
+      if (!changes || typeof changes !== "object") {
+        return wifiConfig;
+      }
+
+      const payload = {};
+      if (Object.prototype.hasOwnProperty.call(changes, "macAddress")) {
+        const text = changes.macAddress == null ? null : String(changes.macAddress).trim().toUpperCase();
+        payload.mac_address = text || null;
+      }
+      if (Object.prototype.hasOwnProperty.call(changes, "macPrefix")) {
+        const text = changes.macPrefix == null ? null : String(changes.macPrefix).trim().toUpperCase();
+        payload.mac_prefix = text || null;
+      }
+      if (Object.prototype.hasOwnProperty.call(changes, "ipAddress")) {
+        const text = changes.ipAddress == null ? null : String(changes.ipAddress).trim();
+        payload.ip_address = text || null;
+      }
+      if (Object.prototype.hasOwnProperty.call(changes, "wsPort")) {
+        if (changes.wsPort === null || changes.wsPort === "") {
+          payload.ws_port = null;
+        } else {
+          const parsed = Number.parseInt(changes.wsPort, 10);
+          payload.ws_port = Number.isFinite(parsed) ? parsed : changes.wsPort;
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(changes, "wsPath")) {
+        if (changes.wsPath == null) {
+          payload.ws_path = null;
+        } else {
+          const text = String(changes.wsPath).trim();
+          payload.ws_path = text ? (text.startsWith("/") ? text : `/${text}`) : null;
+        }
+      }
+
+      if (!Object.keys(payload).length) {
+        const message = buildWifiStatusMessage(wifiConfig);
+        const tone = wifiConfig?.transportAvailable ? "success" : "info";
+        setWifiStatus({ message, tone });
+        if (!silent) {
+          showToast("No Wi-Fi changes detected", "info");
+        }
+        return wifiConfig;
+      }
+
+      setWifiSaving(true);
+      setWifiStatus({ message: "Applying Wi-Fi settings…", tone: "info" });
+      try {
+        const response = await requestJson("/api/control/wifi", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const normalized = normalizeWifiConfig(response);
+        setWifiConfig(normalized);
+        const message = buildWifiStatusMessage(normalized);
+        const tone = normalized.transportAvailable ? "success" : "info";
+        setWifiStatus({ message, tone });
+        if (!silent) {
+          showToast("Wi-Fi settings updated", "success");
+        }
+        await Promise.allSettled([
+          fetchServiceInfo(),
+          fetchControlState({ silent: true }),
+          fetchDiagnostics(),
+        ]);
+        return normalized;
+      } catch (error) {
+        console.error("Failed to update Wi-Fi settings:", error);
+        setWifiStatus({ message: error.message || "Failed to update Wi-Fi settings", tone: "error" });
+        if (!silent) {
+          showToast(error.message || "Failed to update Wi-Fi settings", "error");
+        }
+        throw error;
+      } finally {
+        setWifiSaving(false);
+      }
+    },
+    [wifiConfig, requestJson, showToast, fetchServiceInfo, fetchControlState, fetchDiagnostics]
   );
 
   const sendCommand = useCallback(
@@ -881,10 +1117,16 @@ export function OperatorProvider({ children }) {
       return;
     }
     if (cameraState.source !== "override" && cameraState.streaming === false) {
-      updateCameraState({ error: "Camera stream disabled. Use Enable Stream above." });
+      if (cameraState.error === CAMERA_DISABLED_MESSAGE) {
+        updateCameraState({ error: null, frame: null });
+      } else {
+        updateCameraState({ frame: null });
+      }
       return;
     }
-    updateCameraState({ error: cameraState.error === "Camera stream disabled. Use Enable Stream above." ? null : cameraState.error });
+    if (cameraState.error === CAMERA_DISABLED_MESSAGE) {
+      updateCameraState({ error: null });
+    }
     const socket = new WebSocket(buildWsUrl(CAMERA_WS_PATH));
     cameraSocketRef.current = socket;
     socket.addEventListener("message", (event) => {
@@ -1071,13 +1313,20 @@ export function OperatorProvider({ children }) {
     return sorted;
   }, [logEntries, logFilters, logSort]);
 
+  const controlOverview = useMemo(() => deriveControlOverview(controlState, headerStatus), [controlState, headerStatus]);
+
   const contextValue = useMemo(
     () => ({
       diagnostics,
       serviceInfo,
       headerStatus,
-  controlState,
-  controlModePending,
+      controlState,
+      controlOverview,
+      controlModePending,
+      wifiConfig,
+      wifiStatus,
+      wifiLoading,
+      wifiSaving,
       telemetrySamples,
       commandOutput,
       toasts,
@@ -1088,8 +1337,10 @@ export function OperatorProvider({ children }) {
       modalState,
       fetchDiagnostics,
       fetchServiceInfo,
-  fetchControlState,
-  changeControlTransport,
+      fetchControlState,
+      changeControlTransport,
+      loadWifiConfig,
+      applyWifiConfig,
       startTask,
       executeRawCommand,
       brake,
@@ -1126,6 +1377,13 @@ export function OperatorProvider({ children }) {
       diagnostics,
       serviceInfo,
       headerStatus,
+      controlState,
+      controlOverview,
+      controlModePending,
+      wifiConfig,
+      wifiStatus,
+      wifiLoading,
+      wifiSaving,
       telemetrySamples,
       commandOutput,
       toasts,
@@ -1136,8 +1394,10 @@ export function OperatorProvider({ children }) {
       modalState,
       fetchDiagnostics,
       fetchServiceInfo,
-  fetchControlState,
-  changeControlTransport,
+      fetchControlState,
+      changeControlTransport,
+      loadWifiConfig,
+      applyWifiConfig,
       startTask,
       executeRawCommand,
       brake,

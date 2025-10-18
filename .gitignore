@@ -17,8 +17,16 @@ backend/operator/.venv/
 node_modules/
 frontend/web/node_modules/
 
+# Build outputs
+frontend/web/dist/
+
 # Operator runtime outputs
 .operator_runtime/
 
 # Logs and misc
 *.log
+/# Runtime dotfiles created by local helper scripts
+.serial_bridge.pid
+.serial_bridge.log
+.wifi_last_ip
+/docs/robot-photos

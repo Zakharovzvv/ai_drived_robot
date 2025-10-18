@@ -86,46 +86,78 @@ load_env
 
 WIFI_CACHE_FILE="${REPO_ROOT}/.wifi_last_ip"
 ESP32_MAC_PREFIX_DEFAULT="cc:ba:97"
+BACKEND_STATE_DIR="${REPO_ROOT}/.state/backend"
+BACKEND_WIFI_CACHE_JSON="${BACKEND_STATE_DIR}/last_wifi_endpoint.json"
 
-persist_env_var() {
-  local name="$1"
-  local value="$2"
-  python3 - "$ENV_FILE" "$name" "$value" <<'PY'
+write_last_ip_file() {
+  local ip="$1"
+  if [[ -n "${ip}" ]]; then
+    printf '%s\n' "${ip}" > "${WIFI_CACHE_FILE}"
+  fi
+}
+
+persist_wifi_cache_json() {
+  local endpoint="$1"
+  local timestamp
+  timestamp="$(date +%s)"
+  mkdir -p "${BACKEND_STATE_DIR}"
+  local escaped_endpoint
+  escaped_endpoint="${endpoint//\"/\\\"}"
+  printf '{"endpoint": "%s", "updated_at": %s}\n' "${escaped_endpoint}" "${timestamp}" > "${BACKEND_WIFI_CACHE_JSON}"
+  local ip
+  ip="${endpoint#*//}"
+  ip="${ip%%:*}"
+  write_last_ip_file "${ip}"
+}
+
+read_cached_endpoint() {
+  if [[ -f "${BACKEND_WIFI_CACHE_JSON}" ]]; then
+    python3 - "$BACKEND_WIFI_CACHE_JSON" <<'PY'
+import json
 import sys
 from pathlib import Path
 
-env_path = Path(sys.argv[1])
-name = sys.argv[2]
-value = sys.argv[3]
-
+path = Path(sys.argv[1])
 try:
-  lines = env_path.read_text(encoding="utf-8").splitlines()
-except FileNotFoundError:
-  lines = []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    sys.exit(1)
 
-line_prefix = f"{name}="
-new_line = f"{line_prefix}{value}"
-
-for idx, line in enumerate(lines):
-  if line.startswith(line_prefix):
-    lines[idx] = new_line
-    break
-else:
-  lines.append(new_line)
-
-env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+endpoint = payload.get("endpoint")
+if isinstance(endpoint, str) and endpoint.strip():
+    print(endpoint.strip())
+    sys.exit(0)
+sys.exit(1)
 PY
+    return $?
+  fi
+  return 1
 }
 
 discover_wifi_ip() {
   local ip=""
+  local endpoint=""
+
+  if endpoint="$(read_cached_endpoint 2>/dev/null)"; then
+    ip="${endpoint#*//}"
+    ip="${ip%%:*}"
+    if [[ -n "${ip}" ]] && ping -c1 -W1 "${ip}" >/dev/null 2>&1; then
+      write_last_ip_file "${ip}"
+      echo "${ip}"
+      return 0
+    fi
+    ip=""
+  fi
 
   if [[ -f "${WIFI_CACHE_FILE}" ]]; then
     ip="$(tr -d '\r\n' < "${WIFI_CACHE_FILE}" | head -n1 | tr -d ' ')"
     if [[ -n "${ip}" ]]; then
       if ping -c1 -W1 "${ip}" >/dev/null 2>&1; then
+        persist_wifi_cache_json "ws://${ip}:81/ws/cli"
         echo "${ip}"
         return 0
+      else
+        rm -f "${WIFI_CACHE_FILE}"
       fi
     fi
     ip=""
@@ -135,7 +167,8 @@ discover_wifi_ip() {
   if [[ -z "${ip}" && -f "${screenlog}" ]]; then
     ip="$(grep -Eo 'IP=[0-9]{1,3}(\.[0-9]{1,3}){3}' "${screenlog}" | tail -n1 | cut -d'=' -f2)"
     if [[ -n "${ip}" ]]; then
-      echo "${ip}" > "${WIFI_CACHE_FILE}"
+      write_last_ip_file "${ip}"
+      persist_wifi_cache_json "ws://${ip}:81/ws/cli"
       echo "${ip}"
       return 0
     fi
@@ -148,7 +181,8 @@ discover_wifi_ip() {
   if command -v arp >/dev/null 2>&1; then
     ip="$(arp -an | awk -v mac="${mac_prefix,,}" 'BEGIN{IGNORECASE=1}{gsub(/[()]/,""); if(index(tolower($4), mac)==1){print $2; exit}}')"
     if [[ -n "${ip}" ]]; then
-      echo "${ip}" > "${WIFI_CACHE_FILE}"
+      write_last_ip_file "${ip}"
+      persist_wifi_cache_json "ws://${ip}:81/ws/cli"
       echo "${ip}"
       return 0
     fi
@@ -159,14 +193,14 @@ discover_wifi_ip() {
 
 ensure_ws_endpoint() {
   if [[ -n "${OPERATOR_WS_ENDPOINT:-}" ]]; then
+    persist_wifi_cache_json "${OPERATOR_WS_ENDPOINT}"
     return 0
   fi
   local ip
   if ip="$(discover_wifi_ip)"; then
     export OPERATOR_WS_ENDPOINT="ws://${ip}:81/ws/cli"
     echo "[docker-operator] Auto-detected Wi-Fi endpoint at ${OPERATOR_WS_ENDPOINT}"
-    echo "${ip}" > "${WIFI_CACHE_FILE}"
-    persist_env_var "OPERATOR_WS_ENDPOINT" "${OPERATOR_WS_ENDPOINT}"
+    persist_wifi_cache_json "${OPERATOR_WS_ENDPOINT}"
     return 0
   fi
   echo "[docker-operator] Unable to auto-detect Wi-Fi endpoint; Wi-Fi control will remain unavailable." >&2

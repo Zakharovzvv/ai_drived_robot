@@ -47,8 +47,12 @@ bool i2c_cfg_lift(uint16_t enc_per_mm,int16_t h1,int16_t h2,int16_t h3){
   uint8_t b[8]; memcpy(b+0,&enc_per_mm,2); memcpy(b+2,&h1,2); memcpy(b+4,&h2,2); memcpy(b+6,&h3,2);
   return write_reg(ICD::CFG_LIFT,b,8);
 }
-bool i2c_cfg_grip(uint16_t potmin,uint16_t potmax,int16_t dmin,int16_t dmax){
-  uint8_t b[8]; memcpy(b+0,&potmin,2); memcpy(b+2,&potmax,2); memcpy(b+4,&dmin,2); memcpy(b+6,&dmax,2);
+bool i2c_cfg_grip(int16_t enc_zero,uint16_t enc_per_deg_q12,int16_t deg_min,int16_t deg_max){
+  uint8_t b[8];
+  memcpy(b+0,&enc_zero,2);
+  memcpy(b+2,&enc_per_deg_q12,2);
+  memcpy(b+4,&deg_min,2);
+  memcpy(b+6,&deg_max,2);
   return write_reg(ICD::CFG_GRIP,b,8);
 }
 bool i2c_cfg_odo(uint16_t cpr,uint16_t gear_num,uint16_t gear_den,uint16_t wheel_mm,uint16_t track_mm){

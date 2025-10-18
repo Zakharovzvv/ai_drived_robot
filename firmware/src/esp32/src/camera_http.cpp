@@ -8,6 +8,8 @@
 #include <esp_http_server.h>
 #include <img_converters.h>
 #include <strings.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 namespace {
 httpd_handle_t s_httpd = nullptr;
@@ -20,20 +22,62 @@ constexpr uint8_t kMaxJpegQuality = 63;
 struct ResolutionEntry {
   framesize_t value;
   const char* name;
+  uint16_t width;
+  uint16_t height;
 };
 
 const ResolutionEntry kResolutionTable[] = {
-  {FRAMESIZE_QQVGA, "QQVGA"},   // 160x120
-  {FRAMESIZE_QVGA, "QVGA"},     // 320x240
-  {FRAMESIZE_VGA, "VGA"},       // 640x480
-  {FRAMESIZE_SVGA, "SVGA"},     // 800x600
-  {FRAMESIZE_XGA, "XGA"},       // 1024x768
-  {FRAMESIZE_SXGA, "SXGA"},     // 1280x1024
-  {FRAMESIZE_UXGA, "UXGA"},     // 1600x1200
+  {FRAMESIZE_QQVGA, "QQVGA", 160, 120},   // 160x120
+  {FRAMESIZE_QVGA, "QVGA", 320, 240},     // 320x240
+  {FRAMESIZE_VGA, "VGA", 640, 480},       // 640x480
+  {FRAMESIZE_SVGA, "SVGA", 800, 600},     // 800x600
+  {FRAMESIZE_XGA, "XGA", 1024, 768},      // 1024x768
+  {FRAMESIZE_SXGA, "SXGA", 1280, 1024},   // 1280x1024
+  {FRAMESIZE_UXGA, "UXGA", 1600, 1200},   // 1600x1200
 };
 
 CameraHttpConfig s_config{ kDefaultFrameSize, kDefaultJpegQuality };
 size_t s_max_resolution_index = 0;
+SemaphoreHandle_t s_snapshot_mutex = nullptr;
+
+class MutexGuard {
+ public:
+  explicit MutexGuard(SemaphoreHandle_t handle)
+      : handle_(handle), locked_(false) {}
+
+  bool lock(TickType_t wait_ticks) {
+    if (!handle_) {
+      return false;
+    }
+    if (xSemaphoreTake(handle_, wait_ticks) == pdTRUE) {
+      locked_ = true;
+      return true;
+    }
+    return false;
+  }
+
+  ~MutexGuard() {
+    if (locked_ && handle_) {
+      xSemaphoreGive(handle_);
+    }
+  }
+
+ private:
+  SemaphoreHandle_t handle_;
+  bool locked_;
+};
+
+bool ensure_snapshot_mutex() {
+  if (s_snapshot_mutex) {
+    return true;
+  }
+  s_snapshot_mutex = xSemaphoreCreateMutex();
+  if (!s_snapshot_mutex) {
+    log_line("[CameraHTTP] Failed to create snapshot mutex");
+    return false;
+  }
+  return true;
+}
 
 size_t resolution_count() {
   return sizeof(kResolutionTable) / sizeof(kResolutionTable[0]);
@@ -70,6 +114,19 @@ const ResolutionEntry* find_resolution(const char* name) {
 }
 
 esp_err_t snapshot_handler(httpd_req_t* req) {
+  if (!ensure_snapshot_mutex()) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Camera lock failure");
+    return ESP_FAIL;
+  }
+
+  MutexGuard lock(s_snapshot_mutex);
+  if (!lock.lock(pdMS_TO_TICKS(5000))) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "Camera busy", HTTPD_RESP_USE_STRLEN);
+    return ESP_FAIL;
+  }
+
   if (!wifi_is_connected()) {
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "WiFi disconnected");
     return ESP_FAIL;
@@ -99,11 +156,15 @@ esp_err_t snapshot_handler(httpd_req_t* req) {
   char size_hdr[64];
   snprintf(size_hdr, sizeof(size_hdr), "%ux%u", fb->width, fb->height);
   httpd_resp_set_hdr(req, "X-Frame-Size", size_hdr);
+  httpd_resp_set_hdr(req, "Connection", "close");
   logf("[CameraHTTP] Serving snapshot %ux%u, len=%u", fb->width, fb->height, static_cast<unsigned>(jpg_len));
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
   httpd_resp_set_hdr(req, "Pragma", "no-cache");
   httpd_resp_set_hdr(req, "Expires", "0");
   esp_err_t res = httpd_resp_send(req, reinterpret_cast<const char*>(jpg), jpg_len);
+  if (res != ESP_OK) {
+    logf("[CameraHTTP] snapshot send failed err=0x%x", static_cast<unsigned>(res));
+  }
 
   if (allocated && jpg) {
     free(jpg);
@@ -129,6 +190,7 @@ void camera_http_init() {
   s_config.jpeg_quality = kDefaultJpegQuality;
   int idx = find_resolution_index(kDefaultFrameSize);
   s_max_resolution_index = idx >= 0 ? static_cast<size_t>(idx) : 0;
+  ensure_snapshot_mutex();
 }
 
 bool camera_http_sync_sensor() {
@@ -269,4 +331,103 @@ void camera_http_set_supported_max_resolution(framesize_t frame_size) {
 
 framesize_t camera_http_get_supported_max_resolution() {
   return kResolutionTable[s_max_resolution_index].value;
+}
+
+framesize_t camera_http_detect_supported_max_resolution() {
+  sensor_t* sensor = esp_camera_sensor_get();
+  if (!sensor) {
+    log_line("[CameraHTTP] Sensor handle missing while probing resolutions");
+    return camera_http_get_supported_max_resolution();
+  }
+
+  framesize_t original_size = s_config.frame_size;
+  pixformat_t original_format = PIXFORMAT_JPEG;
+  bool have_original_format = false;
+
+  if (sensor->pixformat >= 0) {
+    original_format = static_cast<pixformat_t>(sensor->pixformat);
+    have_original_format = true;
+  }
+
+  bool switched_to_jpeg = false;
+  if (have_original_format && original_format != PIXFORMAT_JPEG) {
+    if (sensor->set_pixformat(sensor, PIXFORMAT_JPEG) == 0) {
+      switched_to_jpeg = true;
+    } else {
+      log_line("[CameraHTTP] Failed to switch sensor to JPEG for probing");
+    }
+  }
+  framesize_t detected = kResolutionTable[0].value;
+  const ResolutionEntry* detected_entry = &kResolutionTable[0];
+
+  for (int idx = static_cast<int>(resolution_count()) - 1; idx >= 0; --idx) {
+    const auto& candidate = kResolutionTable[idx];
+    if (sensor->set_framesize(sensor, candidate.value) != 0) {
+      logf("[CameraHTTP] Probe reject %s: set_framesize failed", candidate.name);
+      continue;
+    }
+
+    bool valid = false;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+      camera_fb_t* fb = esp_camera_fb_get();
+      if (!fb) {
+        logf("[CameraHTTP] Probe %s attempt %d: fb_get failed", candidate.name, attempt + 1);
+        continue;
+      }
+
+      bool dims_ok = (fb->width == candidate.width && fb->height == candidate.height);
+      bool len_ok = (fb->len > 0);
+      bool jpeg_ok = false;
+
+      if (fb->format == PIXFORMAT_JPEG) {
+        jpeg_ok = true;
+      } else {
+        uint8_t* jpg = nullptr;
+        size_t jpg_len = 0;
+        if (frame2jpg(fb, kMinJpegQuality, &jpg, &jpg_len)) {
+          jpeg_ok = (jpg_len > 0);
+        }
+        if (jpg && jpg != fb->buf) {
+          free(jpg);
+        }
+      }
+
+      esp_camera_fb_return(fb);
+
+      if (dims_ok && len_ok && jpeg_ok) {
+        valid = true;
+        break;
+      }
+
+    }
+
+    if (valid) {
+      detected = candidate.value;
+      detected_entry = &candidate;
+      logf("[CameraHTTP] Probe accepted %s (%u x %u)",
+           candidate.name,
+           static_cast<unsigned>(candidate.width),
+           static_cast<unsigned>(candidate.height));
+      break;
+    }
+
+    logf("[CameraHTTP] Probe reject %s: validation failed", candidate.name);
+  }
+
+  if (sensor->set_framesize(sensor, original_size) != 0) {
+    log_line("[CameraHTTP] Failed to restore frame size after probe");
+  }
+
+  if (switched_to_jpeg && have_original_format) {
+    if (sensor->set_pixformat(sensor, original_format) != 0) {
+      log_line("[CameraHTTP] Failed to restore pixel format after probe");
+    }
+  }
+
+  camera_http_set_supported_max_resolution(detected);
+  s_config.frame_size = original_size;
+  logf("[CameraHTTP] Max resolution set to %s",
+       detected_entry->name);
+  camera_http_sync_sensor();
+  return detected;
 }

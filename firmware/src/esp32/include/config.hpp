@@ -15,7 +15,7 @@
 #define I2C_ADDR_UNO 0x12
 #define I2C_FREQ 400000
 
-// ICD addresses (see ICD doc v0.2)
+// ICD addresses (see ICD doc v0.3)
 namespace ICD {
   // Commands (ESP32 -> UNO)
   constexpr uint8_t DRIVE  = 0x00; // 8 bytes

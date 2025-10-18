@@ -18,6 +18,8 @@ from ..models.api import (
     ShelfMapResponse,
     ShelfMapUpdateRequest,
     ControlTransportUpdate,
+    WifiConfigResponse,
+    WifiConfigUpdate,
 )
 from ..services.operator_service import (
     CameraNotConfiguredError,
@@ -187,6 +189,23 @@ async def api_control_transport_update(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ControlState(**state)
+
+
+@router.get("/api/control/wifi", response_model=WifiConfigResponse)
+async def api_control_wifi(svc: OperatorService = Depends(get_service)) -> WifiConfigResponse:
+    return WifiConfigResponse(**svc.get_wifi_config())
+
+
+@router.post("/api/control/wifi", response_model=WifiConfigResponse)
+async def api_control_wifi_update(
+    request: WifiConfigUpdate,
+    svc: OperatorService = Depends(get_service),
+) -> WifiConfigResponse:
+    try:
+        config = await svc.update_wifi_config(**request.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return WifiConfigResponse(**config)
 
 
 @router.get("/api/logs")

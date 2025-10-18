@@ -1,40 +1,33 @@
 #include <Arduino.h>
+#include <vector>
 #include "vision_color.hpp"
+#include "camera_pins.hpp"
 #include "config.hpp"
 #include "log_sink.hpp"
 #include "esp_camera.h"
 #include "esp32-hal-psram.h"
+#include "sdkconfig.h"
+#include <img_converters.h>
 
 ColorThresh gThresh;
 
 // Freenove ESP32-S3 WROOM routes the camera like CAMERA_MODEL_ESP32S3_EYE.
 static bool camera_setup() {
+  logf("[ESP32] CONFIG_CAMERA_TASK_STACK_SIZE=%d", CONFIG_CAMERA_TASK_STACK_SIZE);
   camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer   = LEDC_TIMER_0;
-  config.pin_d0       = 11;
-  config.pin_d1       = 9;
-  config.pin_d2       = 8;
-  config.pin_d3       = 10;
-  config.pin_d4       = 12;
-  config.pin_d5       = 18;
-  config.pin_d6       = 17;
-  config.pin_d7       = 16;
-  config.pin_xclk     = 15;
-  config.pin_pclk     = 13;
-  config.pin_vsync    = 6;
-  config.pin_href     = 7;
-  config.pin_sccb_sda = 4;
-  config.pin_sccb_scl = 5;
-  config.pin_pwdn     = -1;
-  config.pin_reset    = -1;
-  config.xclk_freq_hz = 10000000; // Stable for OV2640 on this board
-  config.pixel_format = PIXFORMAT_RGB565;
-  config.frame_size   = FRAMESIZE_QQVGA; // 160x120 keeps detection lightweight
-  config.fb_count     = 1;
-  config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
-  config.fb_location  = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
-  config.jpeg_quality = 12;
+  config.ledc_timer = LEDC_TIMER_0;
+  camera_pins::assign(config);
+  config.xclk_freq_hz = 10000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = FRAMESIZE_SVGA;
+
+  const bool has_psram = psramFound();
+  config.fb_location = has_psram ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
+  config.jpeg_quality = has_psram ? 10 : 12;
+  config.fb_count = has_psram ? 2 : 1;
+  config.grab_mode = has_psram ? CAMERA_GRAB_LATEST : CAMERA_GRAB_WHEN_EMPTY;
+  logf("[ESP32] PSRAM detected: %s", has_psram ? "yes" : "no");
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
@@ -48,8 +41,8 @@ static bool camera_setup() {
     return false;
   }
 
-  sensor->set_framesize(sensor, FRAMESIZE_QQVGA);
-  sensor->set_pixformat(sensor, PIXFORMAT_RGB565);
+  // Keep color detection at 320x240 so ROI has enough pixels for stable classification.
+  sensor->set_framesize(sensor, FRAMESIZE_QVGA);
   sensor->set_vflip(sensor, 1);   // Module mounted upside-down
   sensor->set_hmirror(sensor, 0);
   sensor->set_brightness(sensor, 1);
@@ -85,11 +78,30 @@ ColorID detect_cylinder_color(){
   if(esp_camera_sensor_get() == nullptr) return C_NONE;
   camera_fb_t* fb = esp_camera_fb_get();
   if(!fb) return C_NONE;
-  if(fb->format != PIXFORMAT_RGB565){
-    logf("[ESP32] Unexpected frame format %d", fb->format);
+
+  if(fb->width == 0 || fb->height == 0){
+    log_line("[ESP32] Camera frame has invalid dimensions");
     esp_camera_fb_return(fb);
     return C_NONE;
   }
+
+  const uint8_t* rgb565_data = nullptr;
+  std::vector<uint8_t> converted_rgb888;
+  bool use_rgb888 = false;
+
+  if(fb->format == PIXFORMAT_RGB565){
+    rgb565_data = fb->buf;
+  }else{
+    size_t expected = static_cast<size_t>(fb->width) * fb->height * 3;
+    converted_rgb888.resize(expected);
+    if(!fmt2rgb888(fb->buf, fb->len, fb->format, converted_rgb888.data())){
+      logf("[ESP32] fmt2rgb888 failed for format %d", fb->format);
+      esp_camera_fb_return(fb);
+      return C_NONE;
+    }
+    use_rgb888 = true;
+  }
+
   // Sample a central circular ROI ~40x40 px
   const int W = fb->width, H = fb->height;
   const int cx = W/2, cy = H*3/4; // lower center
@@ -97,12 +109,30 @@ ColorID detect_cylinder_color(){
   int y0=max(0,cy-20), y1=min(H-1,cy+20);
   uint32_t cnt=0, nR=0, nG=0, nB=0, nY=0, nW=0, nK=0;
   for(int y=y0;y<=y1;y++){
-    uint16_t* row = (uint16_t*)(fb->buf + y*fb->width*2);
-    for(int x=x0;x<=x1;x++){
-      uint16_t px = row[x];
-      uint8_t r = ((px>>11)&0x1F)<<3;
-      uint8_t g = ((px>>5)&0x3F)<<2;
-      uint8_t b = (px&0x1F)<<3;
+    if(use_rgb888){
+      size_t row_index = static_cast<size_t>(y) * fb->width * 3;
+      for(int x=x0;x<=x1;x++){
+        const uint8_t* px = converted_rgb888.data() + row_index + static_cast<size_t>(x) * 3;
+        uint8_t r = px[0];
+        uint8_t g = px[1];
+        uint8_t b = px[2];
+        uint8_t h,s,v; rgb2hsv(r,g,b,h,s,v);
+        cnt++;
+        if(inRange(gThresh.R,h,s,v) || inRange(gThresh.R2,h,s,v)) nR++;
+        else if(inRange(gThresh.G,h,s,v)) nG++;
+        else if(inRange(gThresh.B,h,s,v)) nB++;
+        else if(inRange(gThresh.Y,h,s,v)) nY++;
+        else if(inRange(gThresh.W,h,s,v)) nW++;
+        else if(inRange(gThresh.K,h,s,v)) nK++;
+      }
+    }else{
+      const uint8_t* row_base = rgb565_data + static_cast<size_t>(y) * fb->width * 2;
+      const uint16_t* row = reinterpret_cast<const uint16_t*>(row_base);
+      for(int x=x0;x<=x1;x++){
+        uint16_t px = row[x];
+        uint8_t r = ((px>>11)&0x1F)<<3;
+        uint8_t g = ((px>>5)&0x3F)<<2;
+        uint8_t b = (px&0x1F)<<3;
       uint8_t h,s,v; rgb2hsv(r,g,b,h,s,v);
       cnt++;
       if(inRange(gThresh.R,h,s,v) || inRange(gThresh.R2,h,s,v)) nR++;
@@ -111,6 +141,7 @@ ColorID detect_cylinder_color(){
       else if(inRange(gThresh.Y,h,s,v)) nY++;
       else if(inRange(gThresh.W,h,s,v)) nW++;
       else if(inRange(gThresh.K,h,s,v)) nK++;
+    }
     }
   }
   esp_camera_fb_return(fb);

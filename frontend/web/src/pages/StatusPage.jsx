@@ -13,6 +13,7 @@ function buildCards(diagnostics) {
   const camera = diagnostics.camera || {};
   const status = diagnostics.status || {};
   const meta = diagnostics.meta || {};
+  const control = diagnostics.control || {};
   const diagTimestamp = diagnostics.timestamp
     ? new Date(diagnostics.timestamp * 1000).toLocaleTimeString()
     : null;
@@ -20,137 +21,279 @@ function buildCards(diagnostics) {
     meta.status_fresh !== undefined
       ? Boolean(meta.status_fresh)
       : Boolean(serial.connected || wifi.connected === true);
-  const wifiConnected = statusFresh && wifi.connected === true;
-  const serialConnected = statusFresh && serial.connected === true;
 
-  const serialStatusErrorDetail =
-    serial.status_error === "no_data"
-      ? "Status error: no data from ESP32"
-      : serial.status_error
-      ? `Status error: ${serial.status_error}`
-      : null;
+  // Build ESP32 services
+  const esp32Services = [];
+
+  // Serial/UART Service
+  const serialService = {
+    name: "UART (Serial)",
+    connected: serial.connected || false,
+    details: [],
+  };
+  if (serial.active_port) {
+    serialService.details.push(`Port: ${serial.active_port}`);
+  } else if (serial.requested_port) {
+    serialService.details.push(`Requested: ${serial.requested_port}`);
+  } else {
+    serialService.details.push("Auto detect");
+  }
+  if (serial.error) {
+    serialService.details.push(`Error: ${serial.error}`);
+  }
+  if (typeof serial.status_age_s === "number" && Number.isFinite(serial.status_age_s)) {
+    serialService.details.push(`Last update: ${serial.status_age_s.toFixed(1)}s ago`);
+  }
+  esp32Services.push(serialService);
+
+  // Wi-Fi Service
+  const wifiTransport = (control.transports || []).find((t) => t.id === "wifi-ws");
+  const wifiService = {
+    name: "Wi-Fi",
+    connected: wifi.connected === true && statusFresh,
+    details: [],
+  };
+  if (wifi.ip) {
+    wifiService.details.push(`IP: ${wifi.ip}`);
+  }
+  if (wifiTransport && wifiTransport.endpoint) {
+    wifiService.details.push(`Endpoint: ${wifiTransport.endpoint}`);
+  }
+  if (wifiTransport && wifiTransport.available !== undefined) {
+    wifiService.details.push(`Transport: ${wifiTransport.available ? "available" : "unavailable"}`);
+  }
+  if (!statusFresh) {
+    wifiService.details.push("No recent telemetry");
+  }
+  esp32Services.push(wifiService);
+
+  // Camera Service
+  const cameraService = {
+    name: "Camera",
+    connected: camera.configured || false,
+    details: [],
+  };
+  if (camera.resolution) {
+    cameraService.details.push(`Resolution: ${camera.resolution}`);
+  }
+  if (camera.quality !== undefined) {
+    cameraService.details.push(`Quality: ${camera.quality}`);
+  }
+  if (camera.max_resolution) {
+    cameraService.details.push(`Max: ${camera.max_resolution}`);
+  }
+  if (camera.streaming !== undefined) {
+    cameraService.details.push(`Streaming: ${camera.streaming ? "ON" : "OFF"}`);
+  }
+  if (camera.transport) {
+    cameraService.details.push(`Transport: ${camera.transport}`);
+  }
+  if (!camera.configured) {
+    cameraService.details.push("Not configured");
+  }
+  esp32Services.push(cameraService);
+
+  // I2C Service (link to UNO)
+  const i2cService = {
+    name: "I2C (UNO Link)",
+    connected: uno.connected || false,
+    details: [],
+  };
+  if (uno.state_id !== undefined) {
+    i2cService.details.push(`UNO State: ${uno.state_id}`);
+  }
+  if (uno.err_flags !== undefined) {
+    i2cService.details.push(`Error flags: ${uno.err_flags}`);
+  }
+  if (uno.error) {
+    i2cService.details.push(`Error: ${uno.error}`);
+  }
+  if (!statusFresh) {
+    i2cService.details.push("No status data");
+  }
+  esp32Services.push(i2cService);
+
+  // Bluetooth Service (placeholder for future)
+  const bluetoothService = {
+    name: "Bluetooth",
+    connected: false,
+    details: ["Not implemented"],
+  };
+  esp32Services.push(bluetoothService);
+
+  // Determine ESP32 overall status
+  const anyServiceConnected = esp32Services.some((s) => s.connected);
+  const esp32Status = anyServiceConnected ? "Online" : "Offline";
+  const esp32Tone = anyServiceConnected ? "ok" : "error";
+
+  // ESP32 System Info - ESP32 specific data only
+  const esp32SystemInfo = [];
+  // ESP32 doesn't have its own sensors - all sensor data comes from UNO via I2C
+
+  // Build UNO services
+  const unoServices = [];
+
+  // Motors Service
+  const motorsConnected = statusFresh && uno.connected && status.drive_left !== undefined;
+  const motorsService = {
+    name: "Motors (Drive)",
+    connected: motorsConnected,
+    details: [],
+  };
+  if (statusFresh && status.drive_left !== undefined) {
+    motorsService.details.push(`Left: ${status.drive_left}`);
+    motorsService.details.push(`Right: ${status.drive_right || 0}`);
+  }
+  if (statusFresh && status.mps !== undefined) {
+    motorsService.details.push(`Speed: ${status.mps} mps`);
+  }
+  if (!motorsConnected) {
+    motorsService.details.push("No motor data");
+  }
+  unoServices.push(motorsService);
+
+  // Sensors Service (Line tracking)
+  const sensorsConnected = statusFresh && uno.connected && status.line_left !== undefined;
+  const sensorsService = {
+    name: "Line Sensors",
+    connected: sensorsConnected,
+    details: [],
+  };
+  if (statusFresh && status.line_left !== undefined) {
+    sensorsService.details.push(`Left: ${status.line_left}`);
+    sensorsService.details.push(`Right: ${status.line_right || 0}`);
+    if (status.line_thr !== undefined) {
+      sensorsService.details.push(`Threshold: ${status.line_thr}`);
+    }
+  }
+  if (!sensorsConnected) {
+    sensorsService.details.push("No sensor data");
+  }
+  unoServices.push(sensorsService);
+
+  // Manipulator Service (Lift & Grip)
+  const manipulatorConnected = statusFresh && uno.connected && status.elev_mm !== undefined;
+  const manipulatorService = {
+    name: "Manipulator",
+    connected: manipulatorConnected,
+    details: [],
+  };
+  if (statusFresh && status.elev_mm !== undefined) {
+    manipulatorService.details.push(`Lift: ${status.elev_mm} mm`);
+    if (status.lift_enc !== undefined) {
+      manipulatorService.details.push(`Lift encoder: ${status.lift_enc}`);
+    }
+  }
+  if (statusFresh && status.grip_deg !== undefined) {
+    manipulatorService.details.push(`Grip: ${status.grip_deg}°`);
+    if (status.grip_enc !== undefined) {
+      manipulatorService.details.push(`Grip encoder: ${status.grip_enc}`);
+    }
+  }
+  if (!manipulatorConnected) {
+    manipulatorService.details.push("No manipulator data");
+  }
+  unoServices.push(manipulatorService);
+
+  // Power Service
+  const powerConnected = statusFresh && uno.connected && status.vbatt_mV !== undefined;
+  const powerService = {
+    name: "Power & Battery",
+    connected: powerConnected,
+    details: [],
+  };
+  if (statusFresh && status.vbatt_mV !== undefined) {
+    const voltage = (status.vbatt_mV / 1000).toFixed(2);
+    powerService.details.push(`Voltage: ${voltage} V (${status.vbatt_mV} mV)`);
+  }
+  if (statusFresh && status.estop !== undefined) {
+    powerService.details.push(`E-Stop: ${status.estop ? "ACTIVE" : "Clear"}`);
+  }
+  if (!powerConnected) {
+    powerService.details.push("No power data");
+  }
+  unoServices.push(powerService);
+
+  // UNO System Info
+  const unoSystemInfo = [];
+  if (uno.state_id !== undefined) unoSystemInfo.push(`State ID: ${uno.state_id}`);
+  if (uno.err_flags !== undefined) unoSystemInfo.push(`Error flags: ${uno.err_flags}`);
+  if (uno.seq_ack !== undefined) unoSystemInfo.push(`Seq ACK: ${uno.seq_ack}`);
+  if (uno.error) unoSystemInfo.push(`Error: ${uno.error}`);
 
   cards.push({
-    title: "ESP32 Serial",
-    value: serial.connected ? "Connected" : "Disconnected",
-    tone: serial.connected ? "ok" : "error",
-    details: [
-      diagTimestamp && `Updated: ${diagTimestamp}`,
-      serial.active_port
-        ? `Port: ${serial.active_port}`
-        : serial.requested_port
-        ? `Requested: ${serial.requested_port}`
-        : "Auto detect",
-      serial.error && `Error: ${serial.error}`,
-      serialStatusErrorDetail,
-      typeof serial.status_age_s === "number" && Number.isFinite(serial.status_age_s)
-        ? `Last update: ${serial.status_age_s.toFixed(1)} s ago`
-        : null,
-      serial.stale ? "Status stale" : null,
-    ].filter(Boolean),
+    type: "device",
+    title: "ESP32",
+    value: esp32Status,
+    tone: esp32Tone,
+    timestamp: diagTimestamp,
+    services: esp32Services,
+    systemInfo: esp32SystemInfo,
   });
 
   cards.push({
-    title: "UNO / I2C",
+    type: "device",
+    title: "Arduino UNO",
     value: uno.connected ? "Online" : "Offline",
     tone: uno.connected ? "ok" : "error",
-    details: [
-      uno.error && `status_error=${uno.error}`,
-      uno.state_id !== undefined && `state_id=${uno.state_id}`,
-      uno.err_flags !== undefined && `err_flags=${uno.err_flags}`,
-      uno.seq_ack !== undefined && `seq_ack=${uno.seq_ack}`,
-    ].filter(Boolean),
+    timestamp: diagTimestamp,
+    services: unoServices,
+    systemInfo: unoSystemInfo.filter(Boolean),
   });
-
-  const wifiHasState = wifi.connected === true || wifi.connected === false;
-  let wifiValue = "Unknown";
-  let wifiTone = "default";
-  if (!statusFresh) {
-    wifiValue = "Unavailable";
-    wifiTone = "warn";
-  } else if (wifiHasState) {
-    wifiValue = wifi.connected ? "Connected" : "Disconnected";
-    wifiTone = wifi.connected ? "ok" : "warn";
-  }
-  const wifiDetails = [wifi.ip && `IP: ${wifi.ip}`];
-  if (!statusFresh) {
-    wifiDetails.unshift("No recent Wi-Fi telemetry");
-  }
-
-  cards.push({
-    title: "Wi-Fi",
-    value: wifiValue,
-    tone: wifiTone,
-    details: wifiDetails.filter(Boolean),
-  });
-
-  cards.push({
-    title: "Camera",
-    value: camera.configured ? "Configured" : "Missing",
-    tone: camera.configured ? "ok" : "warn",
-    details: [
-      camera.resolution && `Resolution: ${camera.resolution}`,
-      camera.quality !== undefined && `Quality: ${camera.quality}`,
-      camera.transport && `Transport: ${camera.transport}`,
-      camera.snapshot_url && `Snapshot: ${camera.snapshot_url}`,
-      camera.streaming !== undefined && `Streaming: ${camera.streaming ? "ON" : "OFF"}`,
-      camera.source && `Source: ${camera.source}`,
-      camera.stream_interval_ms && `Stream interval: ${camera.stream_interval_ms} ms`,
-    ].filter(Boolean),
-  });
-
-  const statusDetails = [];
-  if (status.vbatt_mV !== undefined) statusDetails.push(`Vbatt: ${status.vbatt_mV} mV`);
-  if (status.line_left !== undefined && status.line_right !== undefined) {
-    statusDetails.push(`Line L/R: ${status.line_left}/${status.line_right}`);
-  }
-  if (status.odo_left !== undefined && status.odo_right !== undefined) {
-    statusDetails.push(`ODO L/R: ${status.odo_left}/${status.odo_right}`);
-  }
-  if (status.status_error) statusDetails.push(`Error: ${status.status_error}`);
-  if (!statusFresh) {
-    statusDetails.push("No fresh STATUS data");
-  }
-  if (meta.status_error && meta.status_error !== "no_data") {
-    statusDetails.push(`Status error: ${meta.status_error}`);
-  }
-
-  const statusCardValue = statusFresh ? (status.status_error ? "Errors" : "Nominal") : "Unavailable";
-  const statusCardTone = statusFresh ? (status.status_error ? "warn" : "default") : "warn";
-
-  cards.push({
-    title: "STATUS Snapshot",
-    value: statusCardValue,
-    tone: statusCardTone,
-    details: statusDetails,
-  });
-
-  const robotConnected = wifiConnected || serialConnected;
-  if (!robotConnected) {
-    cards.push({
-      title: "Robot Link",
-      value: "Offline",
-      tone: "warn",
-      details: ["No active Wi-Fi or serial connection"],
-    });
-  }
 
   return cards;
 }
 
-function StatusCard({ title, value, tone = "default", details }) {
-  const dataState = tone !== "default" ? { "data-state": tone } : {};
+function ServiceStatus({ name, connected, details }) {
   return (
-    <article className="status-card" {...dataState}>
-      <h3>{title}</h3>
-      <span>{value}</span>
-      {details && details.length ? (
-        <ul className="status-card-details">
+    <div className="service-status" data-connected={connected}>
+      <div className="service-header">
+        <span className="service-indicator" data-state={connected ? "ok" : "error"} />
+        <h4>{name}</h4>
+        <span className="service-state">{connected ? "Online" : "Offline"}</span>
+      </div>
+      {details && details.length > 0 && (
+        <ul className="service-details">
           {details.map((detail, index) => (
             <li key={index}>{detail}</li>
           ))}
         </ul>
-      ) : null}
+      )}
+    </div>
+  );
+}
+
+function DeviceCard({ title, value, tone, timestamp, services, systemInfo }) {
+  const dataState = tone !== "default" ? { "data-state": tone } : {};
+  return (
+    <article className="device-card" {...dataState}>
+      <div className="device-card-header">
+        <div>
+          <h3>{title}</h3>
+          <span className="device-status">{value}</span>
+        </div>
+        {timestamp && <time className="device-timestamp">{timestamp}</time>}
+      </div>
+
+      {services && services.length > 0 && (
+        <div className="device-services">
+          <h4 className="services-title">Services</h4>
+          {services.map((service, index) => (
+            <ServiceStatus key={index} {...service} />
+          ))}
+        </div>
+      )}
+
+      {systemInfo && systemInfo.length > 0 && (
+        <div className="device-system-info">
+          <h4 className="system-info-title">System Info</h4>
+          <ul>
+            {systemInfo.map((info, index) => (
+              <li key={index}>{info}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </article>
   );
 }
@@ -176,11 +319,9 @@ export default function StatusPage() {
           </svg>
         </button>
       </div>
-      <div className="status-grid-large" role="region" aria-live="polite">
+      <div className="status-devices-grid" role="region" aria-live="polite">
         {cards.length ? (
-          cards.map((card) => (
-            <StatusCard key={card.title} {...card} />
-          ))
+          cards.map((card) => <DeviceCard key={card.title} {...card} />)
         ) : (
           <p style={{ gridColumn: "1/-1", color: "var(--color-text-muted)", textAlign: "center" }}>
             No diagnostics data available

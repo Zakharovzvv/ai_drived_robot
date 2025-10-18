@@ -1,11 +1,87 @@
 # Changelog
 
+## [2025-10-17]
+
+### Frontend (Operator Console)
+
+- **Redesigned Settings Page**: Complete restructure with clear device-based grouping to eliminate duplication and improve usability.
+  - **Connection to ESP32**: Unified section combining Control Transport Mode selection and Wi-Fi Network Configuration
+    - Control Transport Mode shows auto/manual channel selection (Wi-Fi/UART) with last success/failure timestamps
+    - Wi-Fi configuration includes MAC address, MAC prefix, static IP, WebSocket port/path settings
+    - Both settings previously duplicated across separate cards are now in one cohesive interface
+  - **Camera Settings**: Dedicated section for resolution and JPEG quality controls
+  - **Shelf Map**: Independent section for 3×3 color grid configuration with persist-to-flash option
+  - **ESP32 Settings**: Placeholder for future system parameters and firmware configuration
+  - **Arduino UNO Settings**: Placeholder for sensor calibration and motion parameters
+  - Added visual hierarchy with subsection styling and clear separation between setting groups
+  - Improved form layout consistency across all device configuration cards
+
+- **Redesigned Status Page**: Restructured device status display into a two-column layout with ESP32 on the left and Arduino UNO on the right.
+  - **ESP32 Device Card**: Displays overall device status with nested service cards for:
+    - UART (Serial) - connection port, update age
+    - Wi-Fi - IP address, WebSocket endpoint, transport availability
+    - Camera - resolution, quality, streaming status, transport type
+    - I2C (UNO Link) - connection status to Arduino
+    - Bluetooth - placeholder for future implementation
+  - **Arduino UNO Device Card**: Shows device status with service cards for:
+    - Motors (Drive) - left/right motor values, speed in mps
+    - Line Sensors - left/right sensor readings, threshold
+    - Manipulator - lift position (mm), grip angle (°), encoder values
+    - Power & Battery - voltage, E-Stop status
+  - Each service card shows connection indicator (green/red), online/offline state, and relevant telemetry data
+  - System Info sections display device-level diagnostic data (state ID, error flags, sequence ACK)
+  - This hierarchical view clearly represents the robot's two-MCU architecture and their respective subsystems
+
+### Firmware (ESP32)
+
+- Camera snapshot handler now serialises access with a FreeRTOS mutex, adds `Connection: close`, and logs send failures so concurrent REST requests no longer stack or corrupt frames.
+- WebSocket CLI bridge supports up to eight clients, evicts stale sockets, and tracks heartbeat opt-in per peer; idle detection is more accurate thanks to centralised touch handling.
+
+### Tooling & Operations
+
+- `scripts/flash_firmware.sh` auto-detects common USB serial adapters and passes the port to PlatformIO when flashing the ESP32-S3, trimming manual `--upload-port` lookups.
+- Updated `.serial_bridge.pid` and `.wifi_last_ip` with the latest operator-stack session data after wiring diagnostics.
+
+### Documentation (Wiring)
+
+- `docs/wire.md` now pairs the Arduino UNO pin map with an ESP32-S3 table and emphasises SDA/SCL pull-ups to 3.3 V, helping avoid miswired I²C links during bring-up.
+
+## [2025-10-16]
+
+### Frontend
+
+- Unified control-transport status across the operator console: the header badge, Control Link card, and Wi-Fi settings now share a single state source from `OperatorProvider`, so transport availability and endpoints stay in sync regardless of where they are viewed.
+- Refined Wi-Fi settings messaging to reflect live transport data, clarifying when the link is online, on standby for failover, or waiting for discovery.
+
+### Backend & Tooling
+
+- Hardened camera snapshot handling in `OperatorService`: socket-level timeouts are now converted into `CameraSnapshotError`, so Wi-Fi dropouts surface as clean status messages instead of stack traces in the backend logs and WebSocket stream.
+- Added `scripts/flash_firmware.sh` helper with inline usage notes to flash the ESP32-S3 and Arduino Uno targets via PlatformIO (`all`, `esp32`, or `uno` modes) without retyping long commands.
+- Normalized Wi-Fi transport diagnostics: `/api/diagnostics`, `/api/control/transport`, and the frontend now consume the same control snapshot so the reported IP, availability, and last-success timestamps stay consistent even after endpoint changes or reconnects; regression tests cover the transport summary.
+
+### Firmware & Testing
+
+- Added CLI command group `CTRL` (firmware `main.cpp`), enabling manual DRIVE/TURN/ELEV/GRIP/HOME invocations for benchtop validation via `rbm-operator command`.
+- Authored `docs/testing/basic-motion-test.md` with a motion smoke-test checklist and referenced it from the deploy/operator guides for quick access during hardware bring-up.
+
+## [2025-10-15]
+
+### Documentation & Architecture
+
+- Updated mechanical documentation (`docs/RBM-Robot_Architecture.md`, `docs/wire.md`, `docs/ICD — Протокол обмена ESP32↔UNO.md`) to reflect the dual-motor drive base, gripper encoder, refreshed camera mounting and the component-to-element mapping table.
+- Cross-referenced wiring/architecture revisions and clarified ICD telemetry for the new encoder layout and reserved `vy` field in `DRIVE`.
+
+### Firmware & Telemetry
+
+- Arduino UNO firmware (`firmware/src/uno/main.cpp`) reworked for the dual-drive base: new motor pin map, quadrature gripper encoder capture, lift/grip safety limits, and telemetry packing that matches ICD v0.3.
+- ESP32 firmware (`firmware/src/esp32/include/i2c_link.hpp`, `.../i2c_link.cpp`, `.../main.cpp`, `.../config.hpp`) updated to the same protocol: revised drive feedback fields, grip configuration writer, STATUS output with encoder counts, and lint fixes in the CLI telemetry formatting.
+
 ## [2025-10-14]
 
 ### Added (2025-10-14)
 
-- Persisted auto-detected Wi‑Fi WebSocket endpoint into `.env` and cache (`.wifi_last_ip`) so the operator docker stack picks up Wi‑Fi transport automatically on restart.
-- Backend: refinements to `OperatorService` and WebSocket link; added/updated tests for transport and WS link.
+- Tooling: `scripts/operator_stack_docker.sh` now persists the last working Wi‑Fi CLI endpoint in `.state/backend/last_wifi_endpoint.json` (mirrored to `.wifi_last_ip`) and rewrites the cache whenever discovery, ping, or a manual `OPERATOR_WS_ENDPOINT` override succeeds.
+- Backend: refinements to `OperatorService` and WebSocket link; added/updated tests for transport, Wi‑Fi caching and WS link.
 - Frontend: header/control transport selector and settings/status UI tweaks.
 - Firmware: additional WebSocket CLI support, log sink and CLI WebSocket bridge improvements, camera HTTP tweaks and diagnostics.
 - Tooling & Docs: updated Docker stack script (`scripts/operator_stack_docker.sh`), `.env` and operator documentation.
@@ -13,6 +89,7 @@
 ### Fixed (2025-10-14)
 
 - Firmware: WebSocket CLI теперь отвечает на Ping/Pong и снимает зависшие сессии, что предотвращает периодические обрывы Wi‑Fi транспорта оператора.
+- Backend/Frontend: восстановлен полный список разрешений камеры в настройках; опции выше заявленного `cam_max` помечаются как «unsupported», но остаются видимыми для ручного выбора.
 
 
 ## [2025-10-13]

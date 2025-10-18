@@ -56,6 +56,7 @@
 - [x] Обновить `CHANGELOG.md` разделом про камеру/диагностику (см. текущий diff).
 - [ ] Провести валидацию на реальном железе: стрим камеры, логирование, переключение Wi‑Fi (ожидает доступа).
 - [ ] Подготовить скриншоты и дополнение `docs/operator.md` про новые вкладки UI (после аппаратного теста).
+- [ ] Вынести справочник CLI-команд в отдельный документ с примерами ответов и сослаться на него из `docs/operator.md`.
 
 ### 12. Test Automation & QA
 
@@ -77,10 +78,14 @@
 ### 14. Dual Control Transport Selection (2025-10-13)
 
 - [~] Backend: внедрить режим `auto` с приоритетом Wi-Fi и резервным переходом на UART, собирающий состояние доступных транспортов и сохраняя оба соединения конфигурированными. — реализован приоритет Wi-Fi с fallback внутри `OperatorService`, предстоит дополнительно отладить сценарии без железа и покрыть тестами.
+- [x] Backend: кэшировать последний успешный Wi-Fi endpoint и восстанавливать его при старте, устраняя зависимость от переменной `OPERATOR_WS_ENDPOINT`.
 - [x] Backend API: расширить `/api/info` и добавить эндпоинт переключения транспорта, чтобы фронтенд мог запрашивать и задавать активный канал. — добавлены `/api/control/transport` (GET/POST) и выдача метаданных транспорта.
 - [x] Tests: покрыть автоматический выбор и переключение транспорта юнит-тестами `OperatorService`, включая мок Wi-Fi и UART статусы. — добавлен `test_transport_control.py`, проверяющий fallback, смену режимов и обработку ошибок конфигурации.
 - [x] Frontend Header: добавить элемент управления выбором транспорта (Wi-Fi/UART/Auto) и отображение статуса каждого канала. — реализован селектор в `Header.jsx` с бейджами состояния транспорта.
 - [x] Frontend Settings: отобразить состояние обоих транспортов и ссылку на ручной выбор, синхронизируя с новым API. — добавлена карточка `Control Link` с подробной диагностикой и кнопками переключения.
+- [x] Frontend Settings/Header: унифицировать источники данных для статусов транспортов, чтобы бейджи и заголовок использовали одинаковое состояние контроля.
+- [ ] Backend: сбрасывать сохранённый Wi‑Fi endpoint и включать auto discovery при ошибках подключения, чтобы кэш не блокировал переключение на актуальный IP.
+- [x] Backend: синхронизировать состояние транспорта Wi‑Fi с диагностикой, чтобы UI видел единый статус и IP независимо от вкладки.
 - [ ] Docs: обновить `docs/operator.md` и `.env` описание переменных для нового режима управления транспортом.
 
 ### 15. Wi-Fi Telemetry Parity (2025-10-13)
@@ -130,12 +135,60 @@
 - [x] Дополнить тесты backend (юнит/интеграционные) для новой структуры, обеспечить запуск через `pytest` и существующие CLI проверки. — добавлены интеграционные тесты FastAPI маршрутов с заглушкой `OperatorService`, `pytest` покрывает базовые сценарии.
 - [x] Обновить документацию (`docs/operator.md`, README) по новой структуре backend и инструкциям запуска. — `docs/operator.md` дополнен описанием пакетов `api/`, `services/`, `models/`.
 
+### 16. Drive Base Hardware Update (2025-10-15)
+
+- [x] Обновить `docs/RBM-Robot_Architecture.md` под двухмоторное шасси, энкодер захвата и новую позицию камеры.
+- [x] Актуализировать `docs/wire.md`: силовые цепи, распиновка UNO, smoke-test для энкодера захвата.
+- [x] Переписать `docs/ICD — Протокол обмена ESP32↔UNO.md` с учётом двух приводных каналов и новой телеметрии.
+- [x] Зафиксировать изменения в `CHANGELOG.md`.
+
+### 17. Camera Snapshot Corruption Regression (2025-10-16)
+
+- [ ] Провести диагностику артефактов JPEG при высоких разрешениях, зафиксировать поведение текущей прошивки (CLI `CAMSTREAM`, REST `/camera/snapshot`).
+- [ ] Изменить инициализацию камеры так, чтобы буферы кадров выделялись под максимальное поддерживаемое разрешение без потери RGB565-пайплайна цветодетекции.
+- [ ] Зафиксировать аварийный ребут `cam_task` при `FRAMESIZE_UXGA`, определить требуемый размер стека потоков камеры.
+- [ ] Увеличить `CONFIG_CAMERA_TASK_STACK_SIZE` через `platformio.ini` и убедиться, что ESP32 перестает перезагружаться на UXGA.
+- [ ] Повторно прошить ESP32, проверить стабильность HTTP `/camera/snapshot` и задокументировать итоговое разрешение.
+- [ ] Пересобрать прошивку, прошить ESP32 и подтвердить корректные кадры на максимальном разрешении; убедиться, что цветодетектор продолжает работать на QQVGA.
+- [ ] Вынести пины камеры в общий заголовок по аналогии с Freenove `camera_pins.h`, убрать хардкод из `vision_color`.
+- [ ] Перенастроить стартовую инициализацию камеры под рекомендованный профиль (SVGA + `fb_count`/`grab_mode` с учетом PSRAM) и подтвердить отсутствие `cam_task` reset без увеличенного стека.
+
+### 18. Basic Motion Smoke Test (2025-10-16)
+
+- [x] Согласовать набор базовых проверок движения и манипуляторов (прямолинейный ход, повороты, лифт, захват) с существующими возможностями прошивки и CLI.
+- [x] Задокументировать пошаговый чек-лист в `docs/` с указанием команд оператора, условий безопасности и критериев PASS/FAIL.
+- [x] Слинковать новый чек-лист с `docs/deploy-guide.md` и обновить ссылки/контекст.
+- [x] Подготовить шаблон отчёта о стендовых прогонах (при необходимости) и отметить секцию в `docs/operator.md`.
+
+### 19. Status Page Redesign (2025-10-17)
+
+- [x] Переработать страницу статусов (`StatusPage.jsx`) для отображения двух основных устройств в двухколоночном layout: ESP32 слева, Arduino UNO справа.
+- [x] Создать иерархическую структуру с вложенными сервисами для ESP32: UART, Wi-Fi, Camera, I2C Link, Bluetooth (placeholder).
+- [x] Добавить сервисы для Arduino UNO: Motors (Drive), Line Sensors, Manipulator (Lift & Grip), Power & Battery.
+- [x] Реализовать компоненты DeviceCard и ServiceStatus с индикаторами состояния подключения (зелёный/красный), статусами (Online/Offline) и детальной телеметрией.
+- [x] Добавить CSS стили для двухколоночного grid layout с адаптивностью для мобильных устройств.
+- [x] Обновить CHANGELOG с описанием новой иерархической структуры статусов.
+
+### 20. Settings Page Redesign (2025-10-17)
+
+- [x] Провести аудит текущей страницы настроек и выявить дублирование (Control Link, Wi-Fi Settings).
+- [x] Переработать `SettingsPage.jsx` с группировкой настроек по устройствам: **ESP32**, **Arduino UNO**, **Camera**, **Shelf Map**, **Connection**.
+- [x] Создать секцию **Connection Settings** с объединёнными настройками подключения к ESP32 (Control Link режимы + Wi-Fi конфигурация).
+- [x] Создать секцию **ESP32 Settings** для настроек, специфичных для ESP32 (системные параметры, если потребуются).
+- [x] Создать секцию **Arduino UNO Settings** для калибровки сенсоров и параметров движения.
+- [x] Вынести настройки камеры в отдельную секцию **Camera Settings**.
+- [x] Оставить **Shelf Map Settings** как независимую секцию.
+- [x] Унифицировать дизайн карточек настроек: единая структура заголовков, полей форм и кнопок действий.
+- [x] Обновить CSS для новой структуры Settings с улучшенной читаемостью и визуальной иерархией.
+- [x] Обновить CHANGELOG с описанием новой структуры страницы настроек.
+
 ## Recent changes (2025-10-12)
 
 - Firmware: added X-Frame-Size header to camera snapshot responses and initial test-frame logging in `vision_color` to help validate real framebuffer dimensions. Camera init iterates candidate frame sizes and reports a `cam_max` value via CLI.
 - Backend: `/api/diagnostics` enriched with camera runtime fields: `resolution`, `quality`, `available_resolutions`, and `max_resolution`. Backend also queries CAMCFG to populate these fields when serial is available.
 - Frontend: Status card now displays camera `Resolution` and `Quality` in the Status tab; camera settings continue to populate from `available_resolutions` provided by backend.
 - Frontend: Reworked toast system to auto-dismiss after 5 seconds with strict pruning so notifications never pile up on screen.
+- Firmware: probing routine now validates each candidate frame (dimensions + JPEG conversion) before advertising `cam_max`, preventing corrupted frames from being marked supported.
 
 These changes close parts of the Firmware Camera HTTP Service and Operator Backend tasks and provide better observability for the camera configuration and served image size.
 

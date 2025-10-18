@@ -43,6 +43,10 @@ function formatTimestamp(value) {
   return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
 }
 
+// ====================
+// CONTROL TRANSPORT SETTINGS
+// ====================
+
 function ControlTransportSettings() {
   const { controlState, controlModePending, changeControlTransport, fetchControlState } = useOperator();
   const transports = controlState?.transports ?? [];
@@ -71,65 +75,39 @@ function ControlTransportSettings() {
   return (
     <article className="settings-card" data-device="control-link">
       <header>
-        <h3>Control Link</h3>
-        <p>Manage Wi-Fi and UART command channels for the robot.</p>
+        <h3>Control Transport</h3>
+        <p>Select communication channel for robot commands.</p>
       </header>
       <div className="transport-settings-summary">
         <div className="transport-summary-card">
-          <span className="summary-label">Preferred Mode</span>
+          <span className="summary-label">Mode</span>
           <span className="summary-value">{preferredLabel}</span>
         </div>
         <div className="transport-summary-card">
-          <span className="summary-label">Active Channel</span>
+          <span className="summary-label">Active</span>
           <span className="summary-value">{activeTransport ? activeTransport.label : "Pending"}</span>
-          {activeTransport?.endpoint ? (
-            <span className="summary-subtle">{activeTransport.endpoint}</span>
-          ) : null}
-        </div>
-        <div className="transport-summary-card summary-actions">
-          <button
-            type="button"
-            className="btn-secondary btn-sm"
-            onClick={handleRefresh}
-            disabled={controlModePending}
-          >
-            {controlModePending ? "Checking..." : "Refresh Status"}
-          </button>
         </div>
       </div>
       <ul className="transport-status-list">
         <li className="transport-status-item" data-active={activeMode === "auto"}>
           <div className="transport-status-header">
             <div>
-              <span className="transport-name">Automatic Selection</span>
-              <span className={autoBadgeClass}>
-                Prefers Wi-Fi, falls back to UART
-              </span>
-            </div>
-            <div className="transport-actions">
-              <button
-                type="button"
-                className="btn-secondary btn-sm"
-                onClick={() => handleSwitch("auto")}
-                disabled={controlModePending || activeMode === "auto"}
-              >
-                {activeMode === "auto" ? "Selected" : "Use Auto"}
-              </button>
+              <span className="transport-name">Automatic</span>
+              <span className={autoBadgeClass}>Wi-Fi → UART</span>
             </div>
           </div>
-          <div className="transport-meta">
-            <span>Attempts Wi-Fi first, then retries via UART if needed.</span>
+          <div className="transport-actions">
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() => handleSwitch("auto")}
+              disabled={controlModePending || activeMode === "auto"}
+            >
+              {activeMode === "auto" ? "Active" : "Use"}
+            </button>
           </div>
         </li>
         {transports.map((transport) => {
-          const meta = [];
-          if (transport.endpoint) {
-            meta.push(`Endpoint: ${transport.endpoint}`);
-          }
-          meta.push(`Last success: ${formatTimestamp(transport.last_success)}`);
-          if (transport.last_failure) {
-            meta.push(`Last failure: ${formatTimestamp(transport.last_failure)}`);
-          }
           const classes = [
             "transport-badge",
             transport.available ? "online" : "offline",
@@ -144,36 +122,179 @@ function ControlTransportSettings() {
                   <span className="transport-name">{transport.label || transport.id.toUpperCase()}</span>
                   <span className={classes}>
                     <span className="badge-dot" />
-                    {transport.available ? "Online" : "Unavailable"}
+                    {transport.available ? "Online" : "Offline"}
                   </span>
                 </div>
-                <div className="transport-actions">
-                  <button
-                    type="button"
-                    className="btn-secondary btn-sm"
-                    onClick={() => handleSwitch(transport.id)}
-                    disabled={controlModePending || activeMode === transport.id}
-                  >
-                    {activeMode === transport.id ? "Selected" : `Use ${transport.label || transport.id.toUpperCase()}`}
-                  </button>
-                </div>
               </div>
-              <div className="transport-meta">
-                {meta.map((entry) => (
-                  <span key={entry}>{entry}</span>
-                ))}
+              <div className="transport-actions">
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => handleSwitch(transport.id)}
+                  disabled={controlModePending || activeMode === transport.id}
+                >
+                  {activeMode === transport.id ? "Active" : "Use"}
+                </button>
               </div>
             </li>
           );
         })}
-        {transports.length === 0 ? (
-          <li className="transport-status-item empty">Transport details are not available yet.</li>
-        ) : null}
+        <li className="transport-status-item" data-active={false}>
+          <div className="transport-status-header">
+            <div>
+              <span className="transport-name">Bluetooth</span>
+              <span className="transport-badge offline">
+                <span className="badge-dot" />
+                Not Implemented
+              </span>
+            </div>
+          </div>
+          <div className="transport-actions">
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              disabled={true}
+            >
+              Coming Soon
+            </button>
+          </div>
+        </li>
       </ul>
-      <p className="transport-settings-hint">
-        Switch the preferred transport from the header or by using the buttons above. Manual overrides trigger a
-        new health check immediately.
-      </p>
+      <div className="settings-actions">
+        <button type="button" className="btn-secondary btn-sm" onClick={handleRefresh} disabled={controlModePending}>
+          {controlModePending ? "Checking..." : "Refresh"}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+// ====================
+// WI-FI SETTINGS
+// ====================
+
+function WifiSettings() {
+  const { wifiConfig, setWifiConfig, setPersistWifi, connectWifi, resetWifi } = useOperator();
+  const [localConfig, setLocalConfig] = useState(() => ({
+    mac: wifiConfig?.mac ?? "",
+    ip: wifiConfig?.ip ?? "",
+    port: wifiConfig?.port ?? 8080,
+    path: wifiConfig?.path ?? "",
+  }));
+
+  useEffect(() => {
+    setLocalConfig({
+      mac: wifiConfig?.mac ?? "",
+      ip: wifiConfig?.ip ?? "",
+      port: wifiConfig?.port ?? 8080,
+      path: wifiConfig?.path ?? "",
+    });
+  }, [wifiConfig]);
+
+  const isOnline = Boolean(wifiConfig?.online);
+
+  const handleConnect = useCallback(
+    (e) => {
+      e.preventDefault();
+      const payload = {
+        ...localConfig,
+        port: Number(localConfig.port),
+      };
+      setWifiConfig(payload);
+      connectWifi().catch(() => {});
+    },
+    [localConfig, setWifiConfig, connectWifi]
+  );
+
+  const handlePersist = useCallback(
+    (e) => {
+      e.preventDefault();
+      const payload = {
+        ...localConfig,
+        port: Number(localConfig.port),
+      };
+      setWifiConfig(payload);
+      setPersistWifi(payload).catch(() => {});
+    },
+    [localConfig, setWifiConfig, setPersistWifi]
+  );
+
+  const handleReset = useCallback(() => {
+    resetWifi().catch(() => {});
+  }, [resetWifi]);
+
+  const handleFieldChange = useCallback((field, value) => {
+    setLocalConfig((prev) => ({ ...prev, [field]: value }));
+  }, []);
+
+  return (
+    <article className="settings-card" data-device="wifi">
+      <header>
+        <h3>Wi-Fi Network</h3>
+        <p>Configure ESP32 network settings for wireless control.</p>
+      </header>
+      <div className="wifi-status-summary">
+        <span className={`wifi-status-badge ${isOnline ? "online" : "offline"}`}>
+          <span className="badge-dot" />
+          {isOnline ? "Connected" : "Disconnected"}
+        </span>
+        {isOnline && wifiConfig?.ip && (
+          <span className="wifi-endpoint">ws://{wifiConfig.ip}:{wifiConfig.port}{wifiConfig.path || ""}</span>
+        )}
+      </div>
+      <form className="wifi-form" onSubmit={handleConnect}>
+        <div className="form-row">
+          <label>
+            <span>MAC Address</span>
+            <input
+              type="text"
+              placeholder="AA:BB:CC:DD:EE:FF"
+              value={localConfig.mac}
+              onChange={(e) => handleFieldChange("mac", e.target.value)}
+            />
+          </label>
+          <label>
+            <span>IP Address</span>
+            <input
+              type="text"
+              placeholder="192.168.0.100"
+              value={localConfig.ip}
+              onChange={(e) => handleFieldChange("ip", e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="form-row">
+          <label>
+            <span>Port</span>
+            <input
+              type="number"
+              placeholder="8080"
+              value={localConfig.port}
+              onChange={(e) => handleFieldChange("port", e.target.value)}
+            />
+          </label>
+          <label>
+            <span>Path</span>
+            <input
+              type="text"
+              placeholder="/ws"
+              value={localConfig.path}
+              onChange={(e) => handleFieldChange("path", e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button type="submit" className="btn-primary">
+            Connect
+          </button>
+          <button type="button" className="btn-secondary" onClick={handlePersist}>
+            Save Config
+          </button>
+          <button type="button" className="btn-danger" onClick={handleReset}>
+            Reset
+          </button>
+        </div>
+      </form>
     </article>
   );
 }
@@ -217,6 +338,7 @@ function CameraSettings() {
       return {
         value,
         label: dimensions ? `${label} (${dimensions})` : label,
+        unsupported: item.supported === false,
       };
     });
   }, [cameraConfig]);
@@ -263,8 +385,14 @@ function CameraSettings() {
             aria-label="Camera resolution"
           >
             {options.map((option) => (
-              <option key={option.value} value={option.value}>
+              <option
+                key={option.value}
+                value={option.value}
+                data-unsupported={option.unsupported ? "true" : "false"}
+                title={option.unsupported ? "Robot currently reports this level as unsupported" : undefined}
+              >
                 {option.label}
+                {option.unsupported ? " • unsupported" : ""}
               </option>
             ))}
             {cameraConfig &&
@@ -273,8 +401,11 @@ function CameraSettings() {
                 <option value={resolution}>{`${resolution} (current)`}</option>
               )}
           </select>
-        </div>
-        <div className="settings-field">
+          {cameraConfig?.max_resolution ? (
+            <p className="settings-hint" role="note">
+              Firmware reports maximum supported resolution: {cameraConfig.max_resolution}
+            </p>
+          ) : null}
           <label htmlFor="camera-settings-quality">
             JPEG Quality <span>{Number.isFinite(Number(quality)) ? quality : "—"}</span>
           </label>
@@ -475,15 +606,16 @@ export default function SettingsPage() {
       </div>
       <div className="settings-grid">
         <ControlTransportSettings />
+        <WifiSettings />
         <CameraSettings />
         <ShelfMapSettings />
         <article className="settings-card" data-device="esp32">
           <header>
             <h3>ESP32 Controller</h3>
-            <p>Network and system options (coming soon).</p>
+            <p>Main robot controller settings and diagnostics.</p>
           </header>
           <div className="settings-placeholder">
-            <p>Additional ESP32 settings will appear here.</p>
+            <p>ESP32 firmware version, memory usage, and advanced configuration options.</p>
           </div>
         </article>
         <article className="settings-card" data-device="uno">
