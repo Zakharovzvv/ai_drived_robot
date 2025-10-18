@@ -26,6 +26,14 @@ static void cli_print_camcfg(Stream& io);
 static uint32_t g_last_uno_check_ms = 0;
 static SemaphoreHandle_t g_cli_mutex = nullptr;
 
+struct I2CScanResult {
+  uint8_t found = 0;
+  uint8_t errors = 0;
+  bool uno_found = false;
+};
+
+static I2CScanResult i2c_scan_bus(Stream* io);
+
 namespace {
 
 struct CtrlToken {
@@ -95,7 +103,12 @@ void setup(){
   camera_http_init();
   // I2C
   i2c_init();
-  g_uno_ready = i2c_ping_uno();
+  I2CScanResult scan = i2c_scan_bus(nullptr);
+  if(scan.uno_found){
+    g_uno_ready = i2c_ping_uno();
+  }else{
+    g_uno_ready = false;
+  }
   if(!g_uno_ready){
     log_line("[ESP32] UNO not responding; automation disabled");
   }
@@ -444,6 +457,20 @@ static void cli_execute_unlocked(const String& command, Stream& io){
 
     io.println("ctrl_error=UNKNOWN_TARGET");
     log_line("[CLI] ctrl unknown target");
+    return;
+  }
+
+  if(upper.startsWith("I2C")){
+    String args = command.substring(strlen("I2C"));
+    args.trim();
+    if(args.length() == 0 || args.equalsIgnoreCase("SCAN")){
+      I2CScanResult result = i2c_scan_bus(&io);
+      io.printf("i2c_uno_found=%s\n", result.uno_found ? "true" : "false");
+      log_line("[CLI] i2c scan handled");
+      return;
+    }
+    io.println("i2c_error=UNKNOWN_SUBCOMMAND");
+    log_line("[CLI] i2c command invalid");
     return;
   }
 
@@ -806,4 +833,53 @@ String cli_handle_command_capture(const String& command){
   BufferStream buffer;
   cli_handle_command(command, buffer);
   return buffer.data();
+}
+
+static I2CScanResult i2c_scan_bus(Stream* io){
+  I2CScanResult result;
+  String found;
+  for(uint8_t addr = 1; addr < 0x7F; ++addr){
+    Wire.beginTransmission(addr);
+    uint8_t error = Wire.endTransmission(true);
+    if(error == 0){
+      if(found.length()){
+        found += ' ';
+      }
+      char buf[7];
+      snprintf(buf, sizeof(buf), "0x%02X", addr);
+      found += buf;
+      if(io){
+        io->printf("i2c_device=%s\n", buf);
+      }
+      ++result.found;
+      if(addr == I2C_ADDR_UNO){
+        result.uno_found = true;
+      }
+    }else if(error == 4){
+      ++result.errors;
+      if(io){
+        io->printf("i2c_error_addr=0x%02X code=%u\n", addr, static_cast<unsigned>(error));
+      }
+    }
+    delay(2);
+  }
+
+  if(result.found){
+    logf("[I2C] scan found %u device(s): %s", static_cast<unsigned>(result.found), found.c_str());
+  }else{
+    log_line("[I2C] scan found no devices");
+  }
+
+  if(result.errors){
+    logf("[I2C] scan encountered %u error slot(s)", static_cast<unsigned>(result.errors));
+  }
+
+  if(io){
+    io->printf("i2c_scan_total=%u\n", static_cast<unsigned>(result.found));
+    if(result.errors){
+      io->printf("i2c_scan_errors=%u\n", static_cast<unsigned>(result.errors));
+    }
+  }
+
+  return result;
 }

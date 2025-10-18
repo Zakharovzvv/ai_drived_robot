@@ -49,6 +49,9 @@ rbm-operator brake
 rbm-operator smap get
 rbm-operator smap set "R,G,B; Y,W,K; -,-,-"
 rbm-operator smap save
+
+# Диагностика I²C-шины (ESP32 ↔ UNO)
+rbm-operator command "I2C SCAN"
 ```
 
 Часто используемые опции:
@@ -71,6 +74,12 @@ rbm-operator brake                                # нейтраль
 ```
 
 Подробный порядок шагов, включая ожидания по телеметрии, см. в `docs/testing/basic-motion-test.md`.
+
+### Справочник команд CLI
+
+Подробное описание всех команд, включая примеры ответов, вынесено в `docs/operator-cli-reference.md`. Раздел охватывает STATUS/LOGS, управление камерой (`CAMCFG`, `CAMSTREAM`), автоматизацию (`START`, `BRAKE`), набор `CTRL` и работу с картой полок `SMAP` как по UART, так и по WebSocket.
+
+> Совет: при работе через WebSocket добавляйте `--transport ws --ws-endpoint ws://<ip>:81/ws/cli`, чтобы CLI использовал Wi‑Fi канал.
 
 ## 4. Веб-интерфейс
 

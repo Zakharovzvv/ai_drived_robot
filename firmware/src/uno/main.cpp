@@ -340,6 +340,7 @@ void setup(){
   pd_last_state = PIND;
 
   Wire.begin(0x12);
+  Wire.setClock(400000); // align with ESP32 master frequency
   Wire.onReceive(onReceiveHandler);
   Wire.onRequest(onRequestHandler);
 
