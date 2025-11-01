@@ -11,6 +11,32 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
+#if !ENABLE_CAMERA_HTTP
+
+void camera_http_init(){
+  log_line("[CameraHTTP] disabled");
+}
+
+bool camera_http_sync_sensor(){ return false; }
+bool camera_http_start(){ return false; }
+void camera_http_stop(){}
+bool camera_http_is_running(){ return false; }
+
+CameraHttpConfig camera_http_get_config(){
+  return CameraHttpConfig{FRAMESIZE_QQVGA, 12};
+}
+
+bool camera_http_set_quality(uint8_t){ return false; }
+bool camera_http_set_resolution(framesize_t){ return false; }
+bool camera_http_lookup_resolution(const char*, framesize_t* out){ if(out) *out = FRAMESIZE_QQVGA; return false; }
+bool camera_http_set_resolution_by_name(const char*){ return false; }
+const char* camera_http_resolution_name(framesize_t){ return "DISABLED"; }
+void camera_http_set_supported_max_resolution(framesize_t){}
+framesize_t camera_http_get_supported_max_resolution(){ return FRAMESIZE_QQVGA; }
+framesize_t camera_http_detect_supported_max_resolution(){ return FRAMESIZE_QQVGA; }
+
+#else
+
 namespace {
 httpd_handle_t s_httpd = nullptr;
 constexpr char kSnapshotUri[] = "/camera/snapshot";
@@ -431,3 +457,5 @@ framesize_t camera_http_detect_supported_max_resolution() {
   camera_http_sync_sensor();
   return detected;
 }
+
+#endif  // !ENABLE_CAMERA_HTTP

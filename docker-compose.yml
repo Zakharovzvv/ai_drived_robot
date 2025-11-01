@@ -11,7 +11,7 @@ services:
       OPERATOR_WIFI_CACHE_PATH: /app/state/last_wifi_endpoint.json
       OPERATOR_WS_ENDPOINT: ${OPERATOR_WS_ENDPOINT:-}
     ports:
-      - "8000:8000"
+      - "8110:8000"
     restart: unless-stopped
     volumes:
       - ./.state/backend:/app/state
@@ -23,5 +23,5 @@ services:
     depends_on:
       - backend
     ports:
-      - "5173:80"
+      - "5174:80"
     restart: unless-stopped

@@ -287,6 +287,7 @@ start_bridge() {
     rm -f "${BRIDGE_PID_FILE}"
     return 0
   fi
+  echo "[docker-operator] Serial bridge listening on TCP ${BRIDGE_TCP_PORT} (PID ${pid})."
   return 0
 }
 
@@ -303,7 +304,7 @@ stop_bridge() {
     local pgid
     pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ')"
     if [[ -n "${pgid}" ]]; then
-      kill -- -"${pgid}" 2>/dev/null || true
+      kill -TERM -"${pgid}" 2>/dev/null || true
     else
       kill "${pid}" 2>/dev/null || true
     fi

@@ -507,6 +507,28 @@ class OperatorService:
             self._wifi_ws_port,
             self._wifi_ws_path,
         )
+
+        wifi_mac_raw: Optional[str] = None
+        for key in ("wifi_mac", "wifi_mac_address", "device_mac"):
+            value = status.get(key)
+            if isinstance(value, str) and value.strip():
+                wifi_mac_raw = value
+                break
+
+        normalized_wifi_mac = self._normalize_mac_address(wifi_mac_raw)
+        status_mac_prefix_raw = status.get("wifi_mac_prefix")
+        normalized_status_prefix = (
+            self._normalize_mac_prefix(status_mac_prefix_raw)
+            if isinstance(status_mac_prefix_raw, str)
+            else None
+        )
+        derived_prefix = (
+            self._normalize_mac_prefix(normalized_wifi_mac)
+            if normalized_wifi_mac
+            else None
+        )
+        preferred_mac_prefix = normalized_status_prefix or derived_prefix
+
         with self._link_lock:
             current_endpoint = self._transport_endpoints.get(TRANSPORT_WIFI)
             if current_endpoint == endpoint and TRANSPORT_WIFI in self._transports:
@@ -539,19 +561,51 @@ class OperatorService:
 
             self._ws_static_endpoint = endpoint
 
+            config_snapshot = dict(self._wifi_config_store)
+            config_updated = False
+
+            if normalized_wifi_mac:
+                if self._wifi_mac_address != normalized_wifi_mac:
+                    logger.info("Captured ESP32 Wi-Fi MAC %s", normalized_wifi_mac)
+                self._wifi_mac_address = normalized_wifi_mac
+                if config_snapshot.get("mac_address") != normalized_wifi_mac:
+                    config_snapshot["mac_address"] = normalized_wifi_mac
+                    config_updated = True
+
+            if preferred_mac_prefix:
+                if self._wifi_mac_prefix != preferred_mac_prefix:
+                    logger.debug(
+                        "Updating Wi-Fi MAC prefix from %s to %s",
+                        self._wifi_mac_prefix,
+                        preferred_mac_prefix,
+                    )
+                self._wifi_mac_prefix = preferred_mac_prefix
+                if config_snapshot.get("mac_prefix") != preferred_mac_prefix:
+                    config_snapshot["mac_prefix"] = preferred_mac_prefix
+                    config_updated = True
+            elif self._wifi_mac_prefix is None and self._wifi_mac_address:
+                fallback_prefix = self._normalize_mac_prefix(self._wifi_mac_address)
+                if fallback_prefix:
+                    self._wifi_mac_prefix = fallback_prefix
+                    if config_snapshot.get("mac_prefix") != fallback_prefix:
+                        config_snapshot["mac_prefix"] = fallback_prefix
+                        config_updated = True
+
             if not self._ws_auto_enabled or self._wifi_user_ip is not None:
-                snapshot = dict(self._wifi_config_store)
-                previous_ip = snapshot.get("ip_address")
+                previous_ip = config_snapshot.get("ip_address")
                 if wifi_ip:
-                    snapshot["ip_address"] = wifi_ip
+                    config_snapshot["ip_address"] = wifi_ip
                 else:
-                    snapshot.pop("ip_address", None)
-                new_ip = snapshot.get("ip_address")
+                    config_snapshot.pop("ip_address", None)
+                new_ip = config_snapshot.get("ip_address")
                 if previous_ip != new_ip:
                     logger.info("Updating stored Wi-Fi IP from %s to %s", previous_ip, wifi_ip)
-                    self._wifi_config_store = snapshot
-                    save_wifi_config(snapshot)
+                    config_updated = True
                 self._wifi_user_ip = new_ip
+
+            if config_updated:
+                self._wifi_config_store = config_snapshot
+                save_wifi_config(config_snapshot)
 
             self._transport_health.setdefault(
                 TRANSPORT_WIFI,
@@ -835,11 +889,23 @@ class OperatorService:
 
         if transport == TRANSPORT_WIFI:
             should_enable_auto = False
+            cleared_manual_ip = False
             current_endpoint: Optional[str] = None
             with self._link_lock:
                 current_endpoint = self._transport_endpoints.get(TRANSPORT_WIFI)
-                static_override_active = bool(self._wifi_user_ip or self._env_static_endpoint)
-                if not static_override_active:
+                static_env_override = bool(self._env_static_endpoint)
+                manual_ip_override = bool(self._wifi_user_ip)
+
+                if manual_ip_override and not static_env_override:
+                    logger.info(
+                        "Clearing cached Wi-Fi IP %s after transport failure",
+                        self._wifi_user_ip,
+                    )
+                    self._wifi_config_store.pop("ip_address", None)
+                    self._wifi_user_ip = None
+                    cleared_manual_ip = True
+
+                if not static_env_override:
                     should_enable_auto = True
                     link = self._transports.pop(TRANSPORT_WIFI, None)
                     if link and hasattr(link, "close"):
@@ -851,6 +917,9 @@ class OperatorService:
                     if self._active_transport == TRANSPORT_WIFI:
                         fallback = TRANSPORT_SERIAL if TRANSPORT_SERIAL in self._transports else None
                         self._set_active_transport(fallback)
+
+            if cleared_manual_ip:
+                save_wifi_config(self._wifi_config_store)
 
             if should_enable_auto:
                 logger.info(

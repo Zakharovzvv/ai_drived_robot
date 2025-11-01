@@ -1,3 +1,53 @@
+#ifdef MINIMAL_FIRMWARE
+#include <Arduino.h>
+#include <Wire.h>
+#include "config.hpp"
+
+namespace {
+void scan_bus(){
+  Serial.println("Scanning...");
+  uint8_t found = 0;
+  for(uint8_t addr = 1; addr < 0x7F; ++addr){
+    Wire.beginTransmission(addr);
+    uint8_t err = Wire.endTransmission();
+    if(err == 0){
+      Serial.print("I2C device found at address 0x");
+      if(addr < 16) Serial.print("0");
+      Serial.println(addr, HEX);
+      ++found;
+    }else if(err == 4){
+      Serial.print("Unknown error at address 0x");
+      if(addr < 16) Serial.print("0");
+      Serial.println(addr, HEX);
+    }
+    delay(2);
+  }
+  if(!found){
+    Serial.println("No I2C devices found");
+  }
+  Serial.println("done");
+  Serial.flush();
+}
+}  // namespace
+
+void setup(){
+  delay(1000);
+  Serial.begin(9600);
+  delay(1000);
+  Serial.println("=== ESP32 MINIMAL I2C MODE ===");
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Serial.print("Pins: SDA=");
+  Serial.print(I2C_SDA);
+  Serial.print(" SCL=");
+  Serial.println(I2C_SCL);
+  Serial.flush();
+}
+
+void loop(){
+  scan_bus();
+  delay(5000);
+}
+#else
 #include <Arduino.h>
 #include <cstring>
 #include <ctype.h>
@@ -90,9 +140,14 @@ static size_t parse_tokens(const String& payload, CtrlToken* out, size_t maxToke
 }  // namespace
 
 void setup(){
-  Serial.begin(115200);
-  delay(1000);
+  delay(1000);  // Задержка перед Serial
+  Serial.begin(9600);
+  delay(1000);  // Задержка после Serial
+  Serial.println("[DBG] setup entry");
+  Serial.flush();
   log_sink_init();
+  Serial.println("[DBG] log_sink ready");
+  Serial.flush();
   log_line("[ESP32] Boot");
   g_cli_mutex = xSemaphoreCreateMutex();
   if(!g_cli_mutex){
@@ -102,17 +157,22 @@ void setup(){
   cli_ws_init();
   camera_http_init();
   // I2C
-  i2c_init();
-  I2CScanResult scan = i2c_scan_bus(nullptr);
-  if(scan.uno_found){
-    g_uno_ready = i2c_ping_uno();
-  }else{
+  bool i2c_ok = i2c_init();
+  if(!i2c_ok){
+    log_line("[ESP32] I2C init failed; UNO link disabled");
     g_uno_ready = false;
+  }else{
+    I2CScanResult scan = i2c_scan_bus(nullptr);
+    if(scan.uno_found){
+      g_uno_ready = i2c_ping_uno();
+    }else{
+      g_uno_ready = false;
+    }
+    if(!g_uno_ready){
+      log_line("[ESP32] UNO not responding; automation disabled");
+    }
+    g_last_uno_check_ms = millis();
   }
-  if(!g_uno_ready){
-    log_line("[ESP32] UNO not responding; automation disabled");
-  }
-  g_last_uno_check_ms = millis();
   // Camera
   if(!cam_init()) log_line("[ESP32] Camera init FAILED");
   framesize_t detectedMax = camera_http_detect_supported_max_resolution();
@@ -463,10 +523,128 @@ static void cli_execute_unlocked(const String& command, Stream& io){
   if(upper.startsWith("I2C")){
     String args = command.substring(strlen("I2C"));
     args.trim();
+    auto printDiag = [&](const I2CDiagnostics& diag){
+      io.printf(
+        "i2c_ready=%s i2c_using_fallback=%s i2c_current_hz=%lu i2c_primary_hz=%lu i2c_fallback_hz=%lu\n",
+        diag.ready ? "true" : "false",
+        diag.using_fallback ? "true" : "false",
+        static_cast<unsigned long>(diag.current_hz),
+        static_cast<unsigned long>(diag.primary_hz),
+        static_cast<unsigned long>(diag.fallback_hz)
+      );
+      if(diag.last_ping_err != 0xFF){
+        io.printf("i2c_last_ping_err=%u\n", static_cast<unsigned>(diag.last_ping_err));
+      }
+      if(diag.last_write_err_reg != 0xFF){
+        io.printf(
+          "i2c_last_write_err_reg=0x%02X code=%u\n",
+          static_cast<unsigned>(diag.last_write_err_reg),
+          static_cast<unsigned>(diag.last_write_err_code)
+        );
+      }
+      if(diag.last_read_err_reg != 0xFF){
+        io.printf(
+          "i2c_last_read_err_reg=0x%02X code=%u\n",
+          static_cast<unsigned>(diag.last_read_err_reg),
+          static_cast<unsigned>(diag.last_read_err_code)
+        );
+      }
+    };
+
     if(args.length() == 0 || args.equalsIgnoreCase("SCAN")){
+      if(!i2c_is_ready()){
+        io.println("i2c_error=BUS_UNAVAILABLE");
+        log_line("[CLI] i2c scan skipped (bus not ready)");
+        return;
+      }
       I2CScanResult result = i2c_scan_bus(&io);
       io.printf("i2c_uno_found=%s\n", result.uno_found ? "true" : "false");
       log_line("[CLI] i2c scan handled");
+      return;
+    }
+
+    if(args.equalsIgnoreCase("DIAG")){
+      I2CDiagnostics diag = i2c_get_diagnostics();
+      printDiag(diag);
+      log_line("[CLI] i2c diag handled");
+      return;
+    }
+
+    if(args.startsWith("FREQ")){
+      String freqArgs = args.substring(strlen("FREQ"));
+      freqArgs.trim();
+      I2CDiagnostics diag = i2c_get_diagnostics();
+      if(freqArgs.length() == 0 || freqArgs.equalsIgnoreCase("SHOW")){
+        printDiag(diag);
+        log_line("[CLI] i2c freq show");
+        return;
+      }
+      if(freqArgs.equalsIgnoreCase("RESET")){
+        i2c_reset_frequencies(true);
+        I2CDiagnostics updated = i2c_get_diagnostics();
+        printDiag(updated);
+        log_line("[CLI] i2c freq reset");
+        return;
+      }
+
+      CtrlToken freqTokens[4];
+      size_t freqCount = parse_tokens(freqArgs, freqTokens, 4);
+      if(freqCount == 0){
+        io.println("i2c_error=FREQ_SYNTAX");
+        log_line("[CLI] i2c freq syntax error");
+        return;
+      }
+      bool error = false;
+      bool applyNow = true;
+      uint32_t primaryHz = diag.primary_hz ? diag.primary_hz : static_cast<uint32_t>(I2C_FREQ);
+      uint32_t fallbackHz = diag.fallback_hz;
+
+      for(size_t i = 0; i < freqCount && !error; ++i){
+        const String& key = freqTokens[i].key;
+        const String& value = freqTokens[i].value;
+        if(key == "PRIMARY" || key == "P"){
+          long tmp;
+          if(!parse_int(value, tmp) || tmp <= 0){
+            error = true;
+            break;
+          }
+          primaryHz = static_cast<uint32_t>(tmp);
+        }else if(key == "FALLBACK" || key == "F"){
+          long tmp;
+          if(!parse_int(value, tmp) || tmp < 0){
+            error = true;
+            break;
+          }
+          fallbackHz = static_cast<uint32_t>(tmp);
+        }else if(key == "APPLY"){
+          if(value.equalsIgnoreCase("NOW") || value.equalsIgnoreCase("TRUE") || value.equalsIgnoreCase("1")){
+            applyNow = true;
+          }else if(value.equalsIgnoreCase("LATER") || value.equalsIgnoreCase("FALSE") || value.equalsIgnoreCase("0")){
+            applyNow = false;
+          }else{
+            error = true;
+          }
+        }else if(key.length()){
+          error = true;
+        }
+      }
+
+      if(error){
+        io.println("i2c_error=FREQ_SYNTAX");
+        log_line("[CLI] i2c freq syntax error");
+        return;
+      }
+
+      if(!i2c_configure_frequencies(primaryHz, fallbackHz, applyNow)){
+        io.println("i2c_error=FREQ_RANGE");
+        log_line("[CLI] i2c freq invalid range");
+        return;
+      }
+
+      I2CDiagnostics updated = i2c_get_diagnostics();
+      printDiag(updated);
+      io.printf("i2c_freq_applied=%s\n", applyNow ? "true" : "false");
+      log_line("[CLI] i2c freq updated");
       return;
     }
     io.println("i2c_error=UNKNOWN_SUBCOMMAND");
@@ -837,10 +1015,18 @@ String cli_handle_command_capture(const String& command){
 
 static I2CScanResult i2c_scan_bus(Stream* io){
   I2CScanResult result;
+  if(!i2c_is_ready()){
+    if(io){
+      io->println("i2c_error=BUS_UNAVAILABLE");
+    }
+    log_line("[I2C] scan skipped (bus not ready)");
+    return result;
+  }
   String found;
+  TwoWire& bus = i2c_bus();
   for(uint8_t addr = 1; addr < 0x7F; ++addr){
-    Wire.beginTransmission(addr);
-    uint8_t error = Wire.endTransmission(true);
+    bus.beginTransmission(addr);
+    uint8_t error = bus.endTransmission();
     if(error == 0){
       if(found.length()){
         found += ' ';
@@ -883,3 +1069,5 @@ static I2CScanResult i2c_scan_bus(Stream* io){
 
   return result;
 }
+
+#endif  // MINIMAL_FIRMWARE

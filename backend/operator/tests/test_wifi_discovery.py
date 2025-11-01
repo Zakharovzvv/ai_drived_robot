@@ -39,6 +39,24 @@ def test_discover_wifi_ip_falls_back_to_prefix(temp_arp_file: Path) -> None:
     assert ip == "192.168.1.12"
 
 
+def test_discover_wifi_ip_prioritises_exact_match_when_prefix_collides(tmp_path: Path) -> None:
+    table = """IP address       HW type     Flags       HW address            Mask     Device
+192.168.1.20     0x1         0x2         cc:ba:97:aa:bb:01     *        en0
+192.168.1.99     0x1         0x2         cc:ba:97:aa:bb:cc     *        en0
+"""
+    path = tmp_path / "arp_prefix_collision"
+    path.write_text(table, encoding="utf-8")
+
+    ip = wifi_discovery.discover_wifi_ip(
+        mac_address="cc:ba:97:aa:bb:cc",
+        mac_prefix="cc:ba:97",
+        arp_table_path=path,
+        use_system_arp=False,
+    )
+
+    assert ip == "192.168.1.99"
+
+
 def test_discover_wifi_endpoint_uses_default_path(monkeypatch: pytest.MonkeyPatch) -> None:
     entries: List[Tuple[str, str]] = [("192.168.50.77", "cc:ba:97:10:22:33")]
 
