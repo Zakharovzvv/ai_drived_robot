@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 class ESP32WSLink:
     """Minimal compatibility layer mirroring the serial link API."""
 
+    _LISTENER_BACKOFF_INITIAL = 0.5
+    _LISTENER_BACKOFF_MAX = 10.0
+
     def __init__(self, url: str, timeout: float = 5.0) -> None:
         if websocket is None:
             raise SerialNotFoundError(
@@ -40,8 +43,8 @@ class ESP32WSLink:
         self._lock = threading.RLock()
         self._log_next_seq: int = 0
         self._listener_thread: Optional[threading.Thread] = None
+        self._listener_app: Optional[Any] = None
         self._listener_stop = threading.Event()
-        self._listener_backoff = 0.5
         self._last_heartbeat: Optional[float] = None
         self._uptime_ms: Optional[int] = None
         self._consecutive_failures = 0
@@ -123,9 +126,11 @@ class ESP32WSLink:
     def collect_pending_logs(self, limit: int = 64) -> List[tuple[float, str]]:
         with self._lock:
             since = self._log_next_seq
+        original_since = since
         command = f"logs since={since}"
         if limit > 0:
             command = f"{command} limit={limit}"
+
         try:
             result = self.run_command(command, raise_on_error=False)
         except SerialNotFoundError:
@@ -136,8 +141,8 @@ class ESP32WSLink:
         timestamp = time.time()
         entries: List[tuple[float, str]] = []
         summary: Dict[str, Any] = {}
-        with self._lock:
-            last_seq = self._log_next_seq
+        min_seq_seen: Optional[int] = None
+        last_seq = since
 
         for line in result.raw:
             normalized = line.strip()
@@ -153,23 +158,51 @@ class ESP32WSLink:
                 seq_value = int(seq_text.strip())
             except ValueError:
                 continue
-            if seq_value < self._log_next_seq:
+            if min_seq_seen is None or seq_value < min_seq_seen:
+                min_seq_seen = seq_value
+            if seq_value < since:
                 continue
             entries.append((timestamp, payload.strip()))
             if seq_value >= last_seq:
                 last_seq = seq_value + 1
 
-        next_hint = summary.get("logs_next")
-        if isinstance(next_hint, (int, float)):
-            last_seq = max(last_seq, int(next_hint))
-
+        next_hint_raw = summary.get("logs_next")
+        count_hint_raw = summary.get("logs_count")
         error_hint = summary.get("logs_error")
+
+        next_hint: Optional[int] = None
+        if isinstance(next_hint_raw, (int, float)):
+            next_hint = int(next_hint_raw)
+            last_seq = max(last_seq, next_hint)
+
         if error_hint:
             raise SerialNotFoundError(f"log dump error: {error_hint}")
 
+        reset_cursor: Optional[int] = None
+        if entries:
+            reset_cursor = None
+        else:
+            if min_seq_seen is not None and min_seq_seen < original_since:
+                reset_cursor = min_seq_seen
+            elif next_hint is not None and next_hint < original_since:
+                if isinstance(count_hint_raw, (int, float)) and int(count_hint_raw) > 0:
+                    reset_cursor = max(0, next_hint - int(count_hint_raw))
+                else:
+                    reset_cursor = max(0, next_hint)
+
         with self._lock:
-            if last_seq > self._log_next_seq:
+            if reset_cursor is not None and reset_cursor != self._log_next_seq:
+                logger.info(
+                    "Restarting Wi-Fi log capture after sequence reset (%s -> %s)",
+                    original_since,
+                    reset_cursor,
+                )
+                self._log_next_seq = reset_cursor
+            elif last_seq > self._log_next_seq:
                 self._log_next_seq = last_seq
+
+        if reset_cursor is not None:
+            return []
         return entries
 
     def recent_logs(self, limit: int = 200) -> List[tuple[float, str]]:
@@ -202,6 +235,7 @@ class ESP32WSLink:
             return
         if not hasattr(websocket, "WebSocketApp"):
             return
+
         self._listener_stop.clear()
         self._listener_thread = threading.Thread(
             target=self._listener_loop,
@@ -212,13 +246,27 @@ class ESP32WSLink:
 
     def _stop_listener(self) -> None:
         self._listener_stop.set()
+        listener = self._listener_app
+        if listener is not None:
+            try:
+                listener.keep_running = False  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
+            try:
+                listener.close()
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
         if self._listener_thread and self._listener_thread.is_alive():
             self._listener_thread.join(timeout=2.0)
         self._listener_thread = None
         self._listener_stop.clear()
+        self._listener_app = None
 
     def _listener_loop(self) -> None:
-        backoff = self._listener_backoff
+        if websocket is None or not hasattr(websocket, "WebSocketApp"):
+            return
+
+        backoff = self._LISTENER_BACKOFF_INITIAL
         while not self._listener_stop.is_set():
             app = websocket.WebSocketApp(
                 self._url,
@@ -227,13 +275,19 @@ class ESP32WSLink:
                 on_error=self._on_listener_error,
                 on_message=self._on_listener_message,
             )
+
             try:
+                self._listener_app = app
                 app.run_forever(ping_interval=30, ping_timeout=10)
-                backoff = self._listener_backoff
+                backoff = self._LISTENER_BACKOFF_INITIAL
             except Exception as exc:  # pragma: no cover - best effort logging
                 logger.debug("Wi-Fi heartbeat loop failed: %s", exc)
-                backoff = min(backoff * 2, 10.0)
+                backoff = min(backoff * 2, self._LISTENER_BACKOFF_MAX)
+            finally:
+                self._listener_app = None
 
+            if self._listener_stop.is_set():
+                break
             if self._listener_stop.wait(backoff):
                 break
 

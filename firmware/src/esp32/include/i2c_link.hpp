@@ -13,6 +13,7 @@ struct Sens    { int16_t grip_enc_cnt; int16_t lift_enc_cnt; } __attribute__((pa
 struct Odom    { int32_t  L,R; } __attribute__((packed));
 
 bool i2c_init();
+bool i2c_is_ready();
 bool i2c_read(uint8_t addr, uint8_t* buf, size_t n);
 bool i2c_write(uint8_t addr, const uint8_t* buf, size_t n);
 
@@ -27,6 +28,25 @@ bool i2c_cfg_grip(int16_t enc_zero,uint16_t enc_per_deg_q12,int16_t deg_min,int1
 bool i2c_cfg_odo(uint16_t cpr,uint16_t gear_num,uint16_t gear_den,uint16_t wheel_mm,uint16_t track_mm);
 bool i2c_seq();
 bool i2c_ping_uno();
+
+TwoWire& i2c_bus();
+
+struct I2CDiagnostics {
+	bool ready;
+	uint32_t primary_hz;
+	uint32_t fallback_hz;
+	uint32_t current_hz;
+	bool using_fallback;
+	uint8_t last_ping_err;
+	uint8_t last_write_err_reg;
+	uint8_t last_write_err_code;
+	uint8_t last_read_err_reg;
+	uint8_t last_read_err_code;
+};
+
+I2CDiagnostics i2c_get_diagnostics();
+bool i2c_configure_frequencies(uint32_t primary_hz, uint32_t fallback_hz, bool apply_now);
+void i2c_reset_frequencies(bool apply_now);
 
 bool read_STATUS0(Status0& o);
 bool read_STATUS1(Status1& o);

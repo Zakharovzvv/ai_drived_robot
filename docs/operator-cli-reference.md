@@ -198,6 +198,36 @@ i2c_uno_found=true
 i2c_scan_total=1
 ```
 
+### I2C DIAG
+
+| Команда | Описание |
+|---------|----------|
+| `I2C DIAG` | Печатает текущие частоты шины, режим fallback и последние ошибки I²C (ping/read/write). |
+
+**Пример:**
+
+```text
+i2c_ready=true i2c_using_fallback=false i2c_current_hz=100000 i2c_primary_hz=100000 i2c_fallback_hz=50000
+i2c_last_ping_err=0
+```
+
+Если ошибок не было, строки `i2c_last_*` могут отсутствовать.
+
+### I2C FREQ
+
+| Команда | Описание |
+|---------|----------|
+| `I2C FREQ` или `I2C FREQ SHOW` | Выводит текущие настройки частот (эквивалент `I2C DIAG`). |
+| `I2C FREQ RESET` | Возвращает частоты к значениям из прошивки (`primary=100 кГц`, fallback `50 кГц`) и сразу применяет их. |
+| `I2C FREQ primary=<Гц> [fallback=<Гц>] [apply=<now\|later>]` | Обновляет частоты мастера и fallback (1-1,000,000 Гц). `fallback=0` отключает понижение частоты. `apply=later` откладывает применение до ближайшего автоматического переключения. |
+
+**Пример:**
+
+```text
+i2c_ready=true i2c_using_fallback=false i2c_current_hz=100000 i2c_primary_hz=200000 i2c_fallback_hz=50000
+i2c_freq_applied=true
+```
+
 При ошибках передачи добавляется строка `i2c_error_addr=0x.. code=4`. Неизвестные подкоманды → `i2c_error=UNKNOWN_SUBCOMMAND`.
 
 ### START

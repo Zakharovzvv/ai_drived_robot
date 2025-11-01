@@ -39,15 +39,22 @@ def _best_match(
     normalized_mac = normalized_mac.lower()
     normalized_prefix = normalized_prefix.lower()
 
+    exact_match_ip: Optional[str] = None
+    prefix_match_ip: Optional[str] = None
+
     for ip, mac in entries:
         clean_mac = _normalize_mac(mac).lower()
         if not clean_mac:
             continue
         if normalized_mac and clean_mac == normalized_mac:
-            return ip
-        if normalized_prefix and clean_mac.startswith(normalized_prefix):
-            return ip
-    return None
+            exact_match_ip = ip
+            break
+        if normalized_prefix and clean_mac.startswith(normalized_prefix) and prefix_match_ip is None:
+            prefix_match_ip = ip
+
+    if exact_match_ip:
+        return exact_match_ip
+    return prefix_match_ip
 
 
 def _collect_from_proc(path_override: Optional[Path | str]) -> List[Tuple[str, str]]:

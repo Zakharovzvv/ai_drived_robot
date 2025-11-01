@@ -330,7 +330,11 @@ async def test_status_updates_static_wifi_ip(monkeypatch: pytest.MonkeyPatch) ->
 
     assert created_links[0].url == "ws://192.168.0.72:81/ws/cli"
 
-    svc._ensure_wifi_transport({"wifi_connected": True, "wifi_ip": "192.168.31.91"})
+    svc._ensure_wifi_transport({
+        "wifi_connected": True,
+        "wifi_ip": "192.168.31.91",
+        "wifi_mac": "CC:BA:97:AA:BB:CC",
+    })
 
     assert svc._transport_endpoints[TRANSPORT_WIFI] == "ws://192.168.31.91:81/ws/cli"
     assert svc._wifi_user_ip == "192.168.31.91"
@@ -340,3 +344,5 @@ async def test_status_updates_static_wifi_ip(monkeypatch: pytest.MonkeyPatch) ->
     assert config["ip_address"] == "192.168.31.91"
     assert config["transport_available"] is True
     assert saved_config and saved_config[-1]["ip_address"] == "192.168.31.91"
+    assert saved_config[-1]["mac_address"] == "cc:ba:97:aa:bb:cc"
+    assert saved_config[-1]["mac_prefix"] == "cc:ba:97"

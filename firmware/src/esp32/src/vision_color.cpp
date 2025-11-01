@@ -9,6 +9,19 @@
 #include "sdkconfig.h"
 #include <img_converters.h>
 
+#if !ENABLE_CAMERA_HTTP
+
+bool cam_init(){
+  log_line("[ESP32] Camera feature disabled");
+  return false;
+}
+
+ColorID detect_cylinder_color(){
+  return C_NONE;
+}
+
+#else
+
 ColorThresh gThresh;
 
 // Freenove ESP32-S3 WROOM routes the camera like CAMERA_MODEL_ESP32S3_EYE.
@@ -155,3 +168,5 @@ ColorID detect_cylinder_color(){
   if(best==nK) return C_BLACK;
   return C_NONE;
 }
+
+#endif  // !ENABLE_CAMERA_HTTP

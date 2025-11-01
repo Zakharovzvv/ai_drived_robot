@@ -151,6 +151,10 @@ void onReceiveHandler(int len){
   uint8_t start = Wire.read();
   reg_ptr = start;
   len--;
+  Serial.print(F("[I2C] RX reg=0x"));
+  Serial.print(start, HEX);
+  Serial.print(F(" len="));
+  Serial.println(len);
   uint8_t idx = 0;
   while(len-- > 0){
     uint8_t v = Wire.read();
@@ -200,49 +204,66 @@ void onReceiveHandler(int len){
 }
 
 void onRequestHandler(){
+  uint8_t reg = reg_ptr;
+  Serial.print(F("[I2C] TX reg=0x"));
+  Serial.print(reg, HEX);
+  uint8_t sz = 0;
+  
   switch(reg_ptr){
     case REG_STATUS0:{
       Status0 s{state_id, seq_ack, err_flags};
-      Wire.write((uint8_t*)&s, sizeof(s));
+      sz = sizeof(s);
+      Wire.write((uint8_t*)&s, sz);
     } break;
     case REG_STATUS1:{
       int16_t elev_mm = lift_cnt_to_mm(lift_enc);
       int16_t grip_deg = grip_cnt_to_deg(grip_enc);
       Status1 s{elev_mm, grip_deg};
-      Wire.write((uint8_t*)&s, sizeof(s));
+      sz = sizeof(s);
+      Wire.write((uint8_t*)&s, sz);
     } break;
     case REG_LINES:{
       Lines s{(uint16_t)analogRead(PIN_LINE_L), (uint16_t)analogRead(PIN_LINE_R), cfg_line_thr};
-      Wire.write((uint8_t*)&s, sizeof(s));
+      sz = sizeof(s);
+      Wire.write((uint8_t*)&s, sz);
     } break;
     case REG_POWER:{
       uint16_t vbatt = 7400;
       uint8_t mps = digitalRead(PIN_ESTOP)==HIGH;
       uint8_t estop = !mps;
       Power s{vbatt,mps,estop};
-      Wire.write((uint8_t*)&s, sizeof(s));
+      sz = sizeof(s);
+      Wire.write((uint8_t*)&s, sz);
     } break;
     case REG_DRIVEFB:{
       DriveFB s{fb_drive_left_us, fb_drive_right_us, 0, 0};
-      Wire.write((uint8_t*)&s, sizeof(s));
+      sz = sizeof(s);
+      Wire.write((uint8_t*)&s, sz);
     } break;
     case REG_AUXFB:{
       AuxFB s{fb_lift_us, fb_grip_us};
-      Wire.write((uint8_t*)&s, sizeof(s));
+      sz = sizeof(s);
+      Wire.write((uint8_t*)&s, sz);
     } break;
     case REG_SENS:{
       Sens s{(int16_t)grip_enc, (int16_t)lift_enc};
-      Wire.write((uint8_t*)&s, sizeof(s));
+      sz = sizeof(s);
+      Wire.write((uint8_t*)&s, sz);
     } break;
     case REG_ODOM:{
       Odom s{odoL, odoR};
-      Wire.write((uint8_t*)&s, sizeof(s));
+      sz = sizeof(s);
+      Wire.write((uint8_t*)&s, sz);
     } break;
     default:{
       uint8_t zero = 0;
-      Wire.write(&zero, 1);
+      sz = 1;
+      Wire.write(&zero, sz);
     } break;
   }
+  
+  Serial.print(F(" sz="));
+  Serial.println(sz);
 }
 
 // ===== Control =====

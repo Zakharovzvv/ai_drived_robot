@@ -9,11 +9,16 @@
 #error "WIFI_PASSWORD is not defined; configure it via platformio.ini build_flags"
 #endif
 
+#ifndef ENABLE_CAMERA_HTTP
+#define ENABLE_CAMERA_HTTP 0
+#endif
+
 // I2C to UNO
-#define I2C_SDA  8   // adjust to your wiring if needed
-#define I2C_SCL  9
+#define I2C_SDA  21  // GPIO21/14 свободны и не конфликтуют с камерой
+#define I2C_SCL  14
 #define I2C_ADDR_UNO 0x12
-#define I2C_FREQ 400000
+#define I2C_FREQ 100000
+#define I2C_FREQ_FALLBACK 50000
 
 // ICD addresses (see ICD doc v0.3)
 namespace ICD {
